@@ -50,14 +50,14 @@ Status: Completed
 
 ## Phase 4: Discord Adapter Boundaries
 
-Status: In progress
+Status: Completed
 
 - [x] Extract slash command registration and handlers.
 - [x] Extract approval UI and approval state handling.
-- [ ] Extract thread/session routing helpers.
-- [ ] Keep Discord user-facing behavior unchanged.
-- [ ] Build `@zakobot/core`.
-- [ ] Commit and deploy.
+- [x] Extract thread/session routing helpers.
+- [x] Keep Discord user-facing behavior unchanged.
+- [x] Build `@zakobot/core`.
+- [x] Commit and deploy.
 
 ## Phase 5: Memory Architecture
 

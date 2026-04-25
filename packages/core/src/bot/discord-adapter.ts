@@ -6,14 +6,23 @@ import {
   ButtonStyle,
   MessageFlags,
 } from 'discord.js'
-import type { ButtonInteraction, ChatInputCommandInteraction, Interaction, Message, MessageEditOptions, ModalSubmitInteraction, TextBasedChannel } from 'discord.js'
+import type { Interaction, Message, MessageEditOptions, TextBasedChannel } from 'discord.js'
 import type { BotInstanceRow, RoleRow } from '@zakobot/database'
 import type { AgentEvent, GeneralSettings, ToolApprovalCallback, ToolApprovalDecision } from '@zakobot/shared'
 import type { Agent } from '../llm/agent.js'
 import type { ConversationScope, ConversationService } from '../llm/conversation-service.js'
 import { handleApprovalInteraction, type PendingApproval, replyEphemeral, type RepliableInteraction } from './discord-approval-interactions.js'
-import { handleDiscordSlashCommand, MANUAL_BROWSER_COMMAND, NEW_TOPIC_COMMAND, registerDiscordCommands, STOP_COMMAND } from './discord-commands.js'
+import { handleDiscordSlashCommand, registerDiscordCommands } from './discord-commands.js'
 import { buildAssistantMessageChunks } from './discord-stream-renderer.js'
+import {
+  buildChannelScope,
+  buildThreadScope,
+  createDetachedThreadTopic,
+  createThreadTopicFromMessage,
+  isUnknownDiscordThreadError,
+  pruneThreadsIfNeeded,
+  type SendableChannel,
+} from './discord-thread-topics.js'
 import { DiscordModelCommand, MODEL_COMMAND } from './model-command.js'
 
 const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
@@ -25,11 +34,6 @@ const QUEUED_REQUEST_NOTICE = '当前机器人还有其他请求正在处理，�
 type MsgPayload = {
   content: string
   components?: ActionRowBuilder<ButtonBuilder>[]
-}
-
-type SendableChannel = TextBasedChannel & {
-  id: string
-  send: (payload: MsgPayload | { content: string }) => Promise<Message>
 }
 
 type QueuedRequest = {
@@ -157,7 +161,7 @@ export class DiscordAdapter {
 
     try {
       if (userText === '/new') {
-        const { topic, thread } = await this.createDetachedThreadTopic(
+        const { topic, thread } = await createDetachedThreadTopic(this.getThreadTopicDeps(),
           msg.channelId,
           msg.guildId,
           msg.author.username,
@@ -167,7 +171,7 @@ export class DiscordAdapter {
       }
 
       if (userText === '/stop') {
-        await msg.reply(this.formatStopResult(this.stopScopeRequests(this.buildChannelScope(msg.channelId, msg.guildId).scopeKey)))
+        await msg.reply(this.formatStopResult(this.stopScopeRequests(buildChannelScope(this.instance.platform, msg.channelId, msg.guildId).scopeKey)))
         return
       }
 
@@ -185,7 +189,7 @@ export class DiscordAdapter {
       if (requireMention && !isMentioned && !isThread) return
 
       if (!isThread && msg.inGuild() && (threadMode || isMentioned)) {
-        const { topic, scope, thread } = await this.createThreadTopicFromMessage(msg, userText)
+        const { topic, scope, thread } = await createThreadTopicFromMessage(this.getThreadTopicDeps(), msg, userText)
         const send = (payload: MsgPayload) => thread.send(payload).then((m) => { anySentToUser = true; return m })
         await this.processTopicMessage(topic.id, scope, {
           role: 'user',
@@ -199,8 +203,8 @@ export class DiscordAdapter {
       }
 
       const scope = isThread
-        ? this.buildThreadScope(msg.channelId, msg.channel.parentId ?? '', msg.guildId, '')
-        : this.buildChannelScope(msg.channelId, msg.guildId)
+        ? buildThreadScope(this.instance.platform, msg.channelId, msg.channel.parentId ?? '', msg.guildId, '')
+        : buildChannelScope(this.instance.platform, msg.channelId, msg.guildId)
       const topic = this.conversations.getOrCreateActiveTopic(this.instance, scope)
       const input = {
         role: 'user',
@@ -1180,12 +1184,12 @@ export class DiscordAdapter {
     if (!interaction.isChatInputCommand()) return
 
     await handleDiscordSlashCommand({
-      createDetachedThreadTopic: (channelId, guildId, username) => this.createDetachedThreadTopic(channelId, guildId, username),
+      createDetachedThreadTopic: (channelId, guildId, username) => createDetachedThreadTopic(this.getThreadTopicDeps(), channelId, guildId, username),
       instanceName: this.instance.name,
       interaction,
       modelCommand: this.modelCommand,
       startManualBrowser: () => this.startManualBrowser(),
-      stopCurrentScope: (channelId, guildId) => this.formatStopResult(this.stopScopeRequests(this.buildChannelScope(channelId, guildId).scopeKey)),
+      stopCurrentScope: (channelId, guildId) => this.formatStopResult(this.stopScopeRequests(buildChannelScope(this.instance.platform, channelId, guildId).scopeKey)),
     })
   }
 
@@ -1270,7 +1274,7 @@ export class DiscordAdapter {
       await channel.delete()
     }
     catch (error) {
-      if (this.isUnknownDiscordThreadError(error)) {
+      if (isUnknownDiscordThreadError(error)) {
         return
       }
       throw new Error(`Failed to delete Discord thread: ${error instanceof Error ? error.message : String(error)}`)
@@ -1356,94 +1360,16 @@ export class DiscordAdapter {
     }
   }
 
-  private async createThreadTopicFromMessage(msg: Message, userText: string) {
-    const thread = await msg.startThread({ name: this.buildThreadName(userText) })
-    await this.pruneThreadsIfNeeded(msg.channel)
-    const scope = this.buildThreadScope(thread.id, msg.channelId, msg.guildId, msg.id)
-    const topic = this.startNewTopic(scope)
-    return { thread, topic, scope }
-  }
-
-  private async createDetachedThreadTopic(
-    channelId: string,
-    guildId: string | null,
-    requesterName: string,
-  ) {
-    const parentChannel = await this.resolveParentChannel(channelId)
-    const starter = await parentChannel.send({
-      content: `为 ${requesterName} 开启了一个新话题。`,
-    })
-    const thread = await starter.startThread({ name: this.buildThreadName(requesterName) })
-    await this.pruneThreadsIfNeeded(parentChannel)
-    const scope = this.buildThreadScope(thread.id, parentChannel.id, guildId, starter.id)
-    const topic = this.startNewTopic(scope)
-    return { thread, topic, scope }
-  }
-
-  private async resolveParentChannel(channelId: string): Promise<SendableChannel> {
-    const channel = await this.client.channels.fetch(channelId)
-    if (!channel?.isTextBased() || !('send' in channel)) {
-      throw new Error(`Channel ${channelId} is not a sendable text channel`)
-    }
-
-    const parent = channel.isThread() ? channel.parent : channel
-    if (!parent?.isTextBased() || !('send' in parent)) {
-      throw new Error(`Channel ${channelId} has no sendable parent channel`)
-    }
-
-    return parent as SendableChannel
-  }
-
-  private async pruneThreadsIfNeeded(channel: Message['channel'] | SendableChannel) {
-    const { maxThreadsPerChannel } = this.getGeneralSettings()
-    if (maxThreadsPerChannel > 0) {
-      await this.pruneOldThreads(channel as Message['channel'], maxThreadsPerChannel)
-    }
-  }
-
-  private buildThreadScope(
-    threadId: string,
-    parentChannelId: string,
-    guildId: string | null,
-    starterMessageId: string,
-  ): ConversationScope {
+  private getThreadTopicDeps() {
     return {
+      client: this.client,
       platform: this.instance.platform,
-      scopeKey: `discord:${threadId}`,
-      sourceType: 'discord_thread',
-      sourceId: threadId,
-      metadata: {
-        threadId,
-        parentChannelId,
-        guildId: guildId ?? '',
-        starterMessageId,
-      },
-    }
-  }
-
-  private buildThreadName(seed: string) {
-    const normalized = (seed.replace(/<a?:\w+:\d+>/g, '').trim() || seed).slice(0, 100)
-    if (normalized) {
-      return normalized
-    }
-
-    return `新话题-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}`
-  }
-
-  private isUnknownDiscordThreadError(error: unknown) {
-    return typeof error === 'object' && error !== null && 'code' in error && Number(error.code) === 10003
-  }
-
-  private buildChannelScope(channelId: string, guildId: string | null): ConversationScope {
-    return {
-      platform: this.instance.platform,
-      scopeKey: `discord:${channelId}`,
-      sourceType: 'discord_channel',
-      sourceId: channelId,
-      metadata: {
-        channelId,
-        guildId: guildId ?? '',
-      },
+      pruneThreadsIfNeeded: (channel: Message['channel'] | SendableChannel) => pruneThreadsIfNeeded(
+        channel,
+        this.getGeneralSettings().maxThreadsPerChannel,
+        (target, maxCount) => this.pruneOldThreads(target, maxCount),
+      ),
+      startNewTopic: (scope: ConversationScope) => this.conversations.startNewTopic(this.instance, scope),
     }
   }
 
