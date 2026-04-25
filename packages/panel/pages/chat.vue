@@ -30,48 +30,20 @@
         orientation="horizontal"
       />
 
-      <div class="grid gap-3 lg:grid-cols-[18rem_minmax(0,1fr)_auto]">
-        <UFormField label="机器人" name="bot">
-          <USelect
-            v-model="selectedBotId"
-            class="w-full"
-            :items="botOptions"
-            :disabled="botsPending || !botOptions.length"
-            placeholder="选择机器人"
-          />
-        </UFormField>
-
-        <UFormField label="话题" name="topic">
-          <USelect
-            v-model="selectedTopicId"
-            class="w-full"
-            :items="topicOptions"
-            :disabled="topicsPending || !selectedBotId || !topicOptions.length"
-            placeholder="选择话题"
-          />
-        </UFormField>
-
-        <div class="flex items-end">
-          <div class="flex flex-wrap gap-2">
-            <UButton
-              label="新建话题"
-              icon="i-heroicons-plus-20-solid"
-              :loading="creatingTopic"
-              :disabled="!selectedBotId || creatingTopic || deletingTopicId.length > 0"
-              @click="handleCreateTopic"
-            />
-            <UButton
-              label="删除话题"
-              color="error"
-              variant="outline"
-              icon="i-heroicons-trash-20-solid"
-              :loading="deleteTarget ? deletingTopicId === deleteTarget.id : false"
-              :disabled="!selectedTopic || creatingTopic || deletingTopicId.length > 0"
-              @click="openDeleteConfirm"
-            />
-          </div>
-        </div>
-      </div>
+      <ChatTopicToolbar
+        v-model:selected-bot-id="selectedBotId"
+        v-model:selected-topic-id="selectedTopicId"
+        :bot-options="botOptions"
+        :topic-options="topicOptions"
+        :bots-pending="botsPending"
+        :topics-pending="topicsPending"
+        :creating-topic="creatingTopic"
+        :deleting-topic="deletingTopicId.length > 0"
+        :deleting-current-topic="deleteTarget ? deletingTopicId === deleteTarget.id : false"
+        :has-selected-topic="Boolean(selectedTopic)"
+        @create-topic="handleCreateTopic"
+        @delete-topic="openDeleteConfirm"
+      />
 
       <UAlert
         v-if="topicsError || messagesError"
