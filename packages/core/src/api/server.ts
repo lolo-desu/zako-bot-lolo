@@ -22,6 +22,7 @@ import type { BotManager } from '../bot/bot-manager.js'
 import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
+import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
 import { getSearchSettings, normalizeSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
 import { getBrowseSettings, normalizeBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
 import { getGeneralSettings, normalizeGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
@@ -51,17 +52,6 @@ import type {
   SkillImportInput,
   SkillProfile,
 } from '@zakobot/shared'
-
-const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024
-
-class HttpStatusError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message)
-  }
-}
 
 export class ApiServer {
   private server: http.Server
@@ -173,58 +163,23 @@ export class ApiServer {
   }
 
   private json<T>(res: http.ServerResponse, data: ApiResponse<T>, status = 200) {
-    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify(data))
+    return writeJson(res, data, status)
   }
 
   private async readJson<T>(req: http.IncomingMessage) {
-    const chunks: Buffer[] = []
-    let totalBytes = 0
-    const maxBytes = this.maxJsonBodyBytes()
-
-    for await (const chunk of req) {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
-      totalBytes += buffer.byteLength
-
-      if (totalBytes > maxBytes) {
-        throw new HttpStatusError(413, 'Request body is too large')
-      }
-
-      chunks.push(buffer)
-    }
-
-    if (!chunks.length) {
-      return {} as T
-    }
-
-    const raw = Buffer.concat(chunks).toString('utf8')
-    if (!raw.trim()) {
-      return {} as T
-    }
-
-    try {
-      return JSON.parse(raw) as T
-    }
-    catch {
-      throw new HttpStatusError(400, 'Invalid JSON request body')
-    }
-  }
-
-  private maxJsonBodyBytes() {
-    const configured = Number(process.env.CORE_API_MAX_BODY_BYTES)
-    return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_JSON_BODY_BYTES
+    return readJsonBody<T>(req)
   }
 
   private errorMessage(error: unknown, fallback: string) {
-    return error instanceof Error && error.message ? error.message : fallback
+    return getApiErrorMessage(error, fallback)
   }
 
   private errorStatus(error: unknown, fallback = 400) {
-    return error instanceof HttpStatusError ? error.status : fallback
+    return getApiErrorStatus(error, fallback)
   }
 
   private error(res: http.ServerResponse, error: unknown, fallback: string, status = 400) {
-    return this.json(res, { ok: false, error: this.errorMessage(error, fallback) }, this.errorStatus(error, status))
+    return writeApiError(res, error, fallback, status)
   }
 
   private toRoleProfile(row: RoleRow): RoleProfile {

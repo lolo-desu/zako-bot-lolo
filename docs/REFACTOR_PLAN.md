@@ -1,0 +1,94 @@
+# Refactor Plan
+
+This plan keeps production behavior stable while reducing single-file scope and making future feature work safer. Each phase should be small enough to build, commit, deploy, and roll back independently.
+
+## Rules
+
+- Prefer behavior-preserving extraction before feature changes.
+- Keep API contracts, database schema, Discord behavior, and panel routes stable unless a phase explicitly says otherwise.
+- After each phase, run the smallest affected build and update this file.
+- Commit each completed phase before moving to the next phase.
+- Do not include `.opencode/`, generated build output, logs, runtime DB files, or manual test artifacts in commits.
+
+## Phase 1: Core API Foundation
+
+Status: Completed
+
+- [x] Move core API JSON/body/error helpers out of `packages/core/src/api/server.ts`.
+- [x] Keep route behavior unchanged.
+- [x] Build `@zakobot/core`.
+- [x] Commit and deploy.
+
+## Phase 2: Core API Routes
+
+Status: Pending
+
+- [ ] Extract route handlers by domain: status/plugins, settings, bots, roles, conversations, MCP, skills.
+- [ ] Extract serializers for bot, role, conversation, MCP profiles.
+- [ ] Extract request validators/normalizers for editor payloads.
+- [ ] Keep `ApiServer` as a thin router/server coordinator.
+- [ ] Build `@zakobot/core`.
+- [ ] Commit and deploy.
+
+## Phase 3: LLM Client Providers
+
+Status: Pending
+
+- [ ] Split OpenAI-compatible request/stream logic from `packages/core/src/llm/client.ts`.
+- [ ] Split Vertex request/stream logic into a provider module.
+- [ ] Extract common tool execution and approval result formatting.
+- [ ] Keep public `LLMClient` behavior unchanged.
+- [ ] Build `@zakobot/core`.
+- [ ] Commit and deploy.
+
+## Phase 4: Discord Adapter Boundaries
+
+Status: Pending
+
+- [ ] Extract slash command registration and handlers.
+- [ ] Extract approval UI and approval state handling.
+- [ ] Extract thread/session routing helpers.
+- [ ] Keep Discord user-facing behavior unchanged.
+- [ ] Build `@zakobot/core`.
+- [ ] Commit and deploy.
+
+## Phase 5: Memory Architecture
+
+Status: Pending
+
+- [ ] Move memory extraction prompt/parsing out of `Agent`.
+- [ ] Move memory ranking/search terms out of `LocalMemoryService` if it grows further.
+- [ ] Add clear logs for memory save/list/delete and background extraction outcomes.
+- [ ] Add panel visibility for stored memories if needed.
+- [ ] Build affected packages.
+- [ ] Commit and deploy.
+
+## Phase 6: Panel Feature Structure
+
+Status: Pending
+
+- [ ] Move panel API wrappers into feature composables under `composables/api/`.
+- [ ] Split large Vue pages into page shell + feature components.
+- [ ] Extract reusable form state/normalization into composables or utilities.
+- [ ] Preserve Nuxt routes and visual behavior.
+- [ ] Run `@zakobot/panel typecheck` and build.
+- [ ] Commit and deploy.
+
+## Phase 7: Shared Runtime Contracts
+
+Status: Pending
+
+- [ ] Centralize shared payload parsing/validation where core and panel currently duplicate assumptions.
+- [ ] Decide whether to introduce schema validation library only after duplication is visible from earlier phases.
+- [ ] Build `shared`, affected packages, and panel typecheck.
+- [ ] Commit and deploy.
+
+## Phase 8: Cleanup And Runtime Hygiene
+
+Status: Pending
+
+- [ ] Remove manual test artifacts from the runtime workspace when safe.
+- [ ] Review service restart/build workflow documentation.
+- [ ] Review logs for noisy or missing operational events.
+- [ ] Full `pnpm build`.
+- [ ] Commit and deploy.
