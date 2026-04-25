@@ -168,6 +168,7 @@
 
 <script setup lang="ts">
 import type { BotEditorInput } from '@zakobot/shared'
+import { createEmptyBotEditorInput } from '~/composables/bot-editor'
 import { useModelPlatforms } from '~/composables/modelPlatforms'
 
 type SelectOption = {
@@ -198,21 +199,7 @@ const emit = defineEmits<{
 const { platforms } = useModelPlatforms()
 const platformsReady = ref(false)
 
-const state = reactive<BotEditorInput>({
-  name: '',
-  platform: 'discord',
-  token: '',
-  roleId: '',
-  llmProvider: 'openai',
-  llmPlatformName: '',
-  llmModel: '',
-  llmApiKey: '',
-  llmBaseUrl: '',
-  discordUserId: '',
-  discordChannelId: '',
-  discordGuildId: '',
-  enabled: true,
-})
+const state = reactive<BotEditorInput>(createEmptyBotEditorInput())
 
 const showToken = ref(false)
 const selectedModelValue = ref('')

@@ -23,6 +23,7 @@
 
 <script setup lang="ts">
 import type { BotEditorInput, RoleProfile } from '@zakobot/shared'
+import { buildBotRoleOptions, createEmptyBotEditorInput } from '~/composables/bot-editor'
 import { useBotsApi } from '~/composables/api/useBotsApi'
 
 const toast = useToast()
@@ -31,27 +32,10 @@ const botsApi = useBotsApi()
 const { data: rolesData, error: rolesError } = await useFetch<{ ok: true, data: RoleProfile[] }>('/api/roles')
 
 const pending = ref(false)
-const form: BotEditorInput = {
-  name: '',
-  platform: 'discord',
-  token: '',
-  roleId: '',
-  llmProvider: 'openai',
-  llmPlatformName: '',
-  llmModel: '',
-  llmApiKey: '',
-  llmBaseUrl: '',
-  discordUserId: '',
-  discordChannelId: '',
-  discordGuildId: '',
-  enabled: true,
-}
+const form: BotEditorInput = createEmptyBotEditorInput()
 
 const roleOptions = computed(() =>
-  (rolesData.value?.data ?? []).map(role => ({
-    label: role.name,
-    value: role.id,
-  })),
+  buildBotRoleOptions(rolesData.value?.data ?? []),
 )
 
 async function handleSubmit(payload: BotEditorInput) {

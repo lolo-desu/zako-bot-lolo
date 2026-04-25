@@ -76,7 +76,7 @@ Status: In Progress
 
 - [x] Move panel API wrappers into feature composables under `composables/api/`.
 - [ ] Split large Vue pages into page shell + feature components.
-- [ ] Extract reusable form state/normalization into composables or utilities.
+- [x] Extract reusable form state/normalization into composables or utilities.
 - [x] Preserve Nuxt routes and visual behavior.
 - [x] Run `@zakobot/panel typecheck` and build.
 - [ ] Commit and deploy.

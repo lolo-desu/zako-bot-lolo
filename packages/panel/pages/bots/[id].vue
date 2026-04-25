@@ -51,6 +51,7 @@
 <script setup lang="ts">
 import type { BotEditorInput, BotProfile, RoleProfile } from '@zakobot/shared'
 import { useBotsApi } from '~/composables/api/useBotsApi'
+import { buildBotEditorInput, buildBotRoleOptions } from '~/composables/bot-editor'
 
 const route = useRoute()
 const toast = useToast()
@@ -74,28 +75,11 @@ const showDeleteConfirm = ref(false)
 
 const bot = computed(() => data.value?.data ?? null)
 const roleOptions = computed(() =>
-  (rolesData.value?.data ?? []).map(role => ({
-    label: role.name,
-    value: role.id,
-  })),
+  buildBotRoleOptions(rolesData.value?.data ?? []),
 )
 const pageError = computed(() => error.value?.message ?? rolesError.value?.message ?? '')
 
-const form = computed<BotEditorInput>(() => ({
-  name: bot.value?.name ?? '',
-  platform: bot.value?.platform ?? 'discord',
-  token: bot.value?.token ?? '',
-  roleId: bot.value?.roleId ?? '',
-  llmProvider: bot.value?.llmProvider ?? 'openai',
-  llmPlatformName: bot.value?.llmPlatformName ?? '',
-  llmModel: bot.value?.llmModel ?? '',
-  llmApiKey: bot.value?.llmApiKey ?? '',
-  llmBaseUrl: bot.value?.llmBaseUrl ?? '',
-  discordUserId: bot.value?.discordUserId ?? '',
-  discordChannelId: bot.value?.discordChannelId ?? '',
-  discordGuildId: bot.value?.discordGuildId ?? '',
-  enabled: bot.value?.enabled ?? true,
-}))
+const form = computed<BotEditorInput>(() => buildBotEditorInput(bot.value))
 
 const deleteConfirmActions = computed(() => [
   {
