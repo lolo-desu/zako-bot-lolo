@@ -23,14 +23,14 @@ Status: Completed
 
 Status: In progress
 
-- [ ] Extract route handlers by domain: status/plugins, settings, bots, roles, conversations, MCP, skills.
+- [x] Extract route handlers by domain: status/plugins, settings, bots, roles, conversations, MCP, skills.
 - [x] Extract status/plugins routes.
 - [x] Extract settings routes.
 - [x] Extract skills routes.
 - [x] Extract roles routes.
 - [x] Extract bots routes.
 - [x] Extract conversations routes.
-- [ ] Extract MCP routes.
+- [x] Extract MCP routes.
 - [x] Extract serializers for bot, role, conversation, MCP profiles.
 - [x] Extract request validators/normalizers for editor payloads.
 - [ ] Keep `ApiServer` as a thin router/server coordinator.

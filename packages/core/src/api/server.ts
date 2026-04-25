@@ -1,12 +1,7 @@
 import http from 'http'
 import {
-  createMcpServer,
-  deleteMcpServer,
-  getMcpServer,
   getRole,
   listMcpServers,
-  updateBot,
-  updateMcpServer,
 } from '@zakobot/database'
 import type { DB } from '@zakobot/database'
 import type { BotManager } from '../bot/bot-manager.js'
@@ -14,19 +9,15 @@ import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
-import { toConversationMessage, toConversationTopic, toMcpServerProfile } from './serializers.js'
+import { getMcpRoute } from './routes/mcp.js'
 import { getBotsRoute } from './routes/bots.js'
 import { getConversationsRoute } from './routes/conversations.js'
 import { getRolesRoute } from './routes/roles.js'
 import { getSettingsRoute } from './routes/settings.js'
 import { getSkillsRoute } from './routes/skills.js'
 import { getSystemRoute } from './routes/system.js'
-import {
-  parseMcpServerInput,
-} from './validators.js'
 import type {
   ApiResponse,
-  McpServerEditorInput,
   McpServerStatus,
 } from '@zakobot/shared'
 
@@ -192,114 +183,18 @@ export class ApiServer {
       return this.json(res, skillsRoute.body, skillsRoute.status)
     }
 
-    if (pathname === '/mcp/status' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: this.listMcpStatus() })
-    }
-
-    if (pathname === '/mcp/servers' && req.method === 'GET') {
-      return this.json(res, {
-        ok: true,
-        data: listMcpServers(this.db).map(row => toMcpServerProfile(row)),
-      })
-    }
-
-    if (pathname === '/mcp/servers' && req.method === 'POST') {
-      try {
-        const payload = parseMcpServerInput(await this.readJson<McpServerEditorInput>(req))
-        const created = createMcpServer(this.db, payload)
-
-        if (created.enabled) {
-          this.mcpManager.connect(created).catch((error) => {
-            console.error(`[ApiServer] Failed to connect MCP server "${created.name}":`, error)
-          })
-        }
-
-        return this.json(res, { ok: true, data: toMcpServerProfile(created) }, 201)
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
+    const mcpRoute = await getMcpRoute(req, pathname, {
+      db: this.db,
+      listStatus: () => this.listMcpStatus(),
+      mcpManager: this.mcpManager,
+    })
+    if (mcpRoute) {
+      return this.json(res, mcpRoute.body, mcpRoute.status)
     }
 
     const settingsRoute = await getSettingsRoute(req, pathname, this.db)
     if (settingsRoute) {
       return this.json(res, settingsRoute.body, settingsRoute.status)
-    }
-
-    const mcpServerReconnectMatch = pathname.match(/^\/mcp\/servers\/([^/]+)\/reconnect$/)
-    if (mcpServerReconnectMatch && req.method === 'POST') {
-      const server = getMcpServer(this.db, mcpServerReconnectMatch[1])
-
-      if (!server) {
-        return this.json(res, { ok: false, error: 'MCP server not found' }, 404)
-      }
-
-      try {
-        await this.mcpManager.reconnect(server)
-        return this.json(res, { ok: true, data: toMcpServerProfile(server) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Failed to reconnect MCP server')
-      }
-    }
-
-    const mcpServerMatch = pathname.match(/^\/mcp\/servers\/([^/]+)$/)
-    if (mcpServerMatch && req.method === 'GET') {
-      const server = getMcpServer(this.db, mcpServerMatch[1])
-
-      if (!server) {
-        return this.json(res, { ok: false, error: 'MCP server not found' }, 404)
-      }
-
-      return this.json(res, { ok: true, data: toMcpServerProfile(server) })
-    }
-
-    if (mcpServerMatch && req.method === 'PUT') {
-      const existing = getMcpServer(this.db, mcpServerMatch[1])
-
-      if (!existing) {
-        return this.json(res, { ok: false, error: 'MCP server not found' }, 404)
-      }
-
-      try {
-        const payload = parseMcpServerInput(await this.readJson<McpServerEditorInput>(req))
-        const updated = updateMcpServer(this.db, mcpServerMatch[1], payload)
-
-        if (!updated) {
-          throw new Error('Failed to update MCP server')
-        }
-
-        if (updated.enabled) {
-          this.mcpManager.reconnect(updated).catch((error) => {
-            console.error(`[ApiServer] Failed to reconnect MCP server "${updated.name}":`, error)
-          })
-        }
-        else {
-          await this.mcpManager.disconnect(updated.id)
-        }
-
-        return this.json(res, { ok: true, data: toMcpServerProfile(updated) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (mcpServerMatch && req.method === 'DELETE') {
-      const existing = getMcpServer(this.db, mcpServerMatch[1])
-
-      if (!existing) {
-        return this.json(res, { ok: false, error: 'MCP server not found' }, 404)
-      }
-
-      try {
-        await this.mcpManager.disconnect(existing.id)
-        deleteMcpServer(this.db, existing.id)
-        return this.json(res, { ok: true, data: toMcpServerProfile(existing) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Failed to delete MCP server')
-      }
     }
 
     const rolesRoute = await getRolesRoute(req, pathname, this.db)
