@@ -14,6 +14,10 @@ export function getSkillsRoot(zakobotHome: string): string {
   return resolveConfigPath(process.env.ZAKOBOT_SKILLS_DIR) ?? resolve(zakobotHome, 'skills')
 }
 
+export function getGeneratedImagesDir(zakobotHome: string): string {
+  return resolveConfigPath(process.env.ZAKOBOT_GENERATED_IMAGES_DIR) ?? resolve(zakobotHome, 'generated-images')
+}
+
 export function resolveZakobotPath(basePath: string, ...paths: string[]): string {
   return resolve(basePath, ...paths)
 }

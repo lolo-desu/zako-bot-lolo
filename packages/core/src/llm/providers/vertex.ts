@@ -1,8 +1,9 @@
 import { GoogleGenAI } from '@google/genai'
 import type { Content, Part, Tool as GenAITool } from '@google/genai'
-import type { AgentEvent, ChatMessage, LLMTool } from '@zakobot/shared'
+import type { AgentEvent, ChatMessage, LLMTool, ToolExecutionArtifact } from '@zakobot/shared'
 import type { LLMChatOptions, LLMRequestOptions, LLMStreamOptions } from '../provider-types.js'
 import { escapeLogMessage, formatDeniedToolResult, formatLogValue, splitSegments } from '../provider-utils.js'
+import { normalizeToolExecutionResult } from '../../tools/tool-result.js'
 
 let callCounter = 0
 
@@ -67,7 +68,7 @@ export async function chatVertex(
         }
 
         console.log(`[ToolCall] ${functionCall.name} ${formatLogValue(args)}`)
-        result = await tool.execute(args)
+        result = normalizeToolExecutionResult(await tool.execute(args)).content
         console.log(`[ToolResult] ${functionCall.name} ok length=${result.length}`)
       }
       catch (error) {
@@ -144,6 +145,7 @@ export async function* chatStreamVertex(
       yield { type: 'tool_call', callId, name: functionCall.name!, input: args }
 
       let result: string
+      let artifacts: ToolExecutionArtifact[] = []
       let ok = true
 
       try {
@@ -163,8 +165,10 @@ export async function* chatStreamVertex(
         }
 
         console.log(`[ToolCall] ${functionCall.name} ${formatLogValue(args)}`)
-        result = await tool.execute(args)
-        console.log(`[ToolResult] ${functionCall.name} ok length=${result.length}`)
+        const execution = normalizeToolExecutionResult(await tool.execute(args))
+        result = execution.content
+        artifacts = execution.artifacts
+        console.log(`[ToolResult] ${functionCall.name} ok length=${result.length} artifacts=${artifacts.length}`)
       }
       catch (error) {
         result = `Error: ${error instanceof Error ? error.message : String(error)}`
@@ -172,7 +176,7 @@ export async function* chatStreamVertex(
         console.warn(`[ToolResult] ${functionCall.name} error="${escapeLogMessage(result)}"`)
       }
 
-      yield { type: 'tool_result', callId, name: functionCall.name!, result, ok }
+      yield { type: 'tool_result', callId, name: functionCall.name!, result, ok, artifacts }
       responseParts.push({ functionResponse: { name: functionCall.name!, response: { result } } })
     }
 

@@ -209,7 +209,7 @@
               <UInput
                 v-model="requiredToolsText"
                 class="w-full font-mono"
-                placeholder="web_search, file_read"
+                placeholder="render_markdown_table_image, file_read"
                 :disabled="saving"
               />
             </UFormField>

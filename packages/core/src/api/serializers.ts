@@ -173,7 +173,7 @@ function normalizeEnabledTools(value: unknown): string[] {
     return []
   }
 
-  const builtinTools = new Set<string>(['web_search', 'web_browse', 'shell_exec', 'file_read', 'file_write', 'file_edit', 'file_list'])
+  const builtinTools = new Set<string>(['web_search', 'web_browse', 'shell_exec', 'file_read', 'file_write', 'file_edit', 'file_list', 'render_markdown_table_image'])
   const result: string[] = []
   const seen = new Set<string>()
 

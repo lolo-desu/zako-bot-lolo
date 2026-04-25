@@ -1,4 +1,5 @@
 import {
+  AttachmentBuilder,
   Client,
   GatewayIntentBits,
   ActionRowBuilder,
@@ -8,7 +9,7 @@ import {
 } from 'discord.js'
 import type { Interaction, Message, MessageEditOptions, TextBasedChannel } from 'discord.js'
 import type { BotInstanceRow, RoleRow } from '@zakobot/database'
-import type { AgentEvent, GeneralSettings, ToolApprovalCallback, ToolApprovalDecision } from '@zakobot/shared'
+import type { AgentEvent, GeneralSettings, ToolApprovalCallback, ToolApprovalDecision, ToolExecutionArtifact } from '@zakobot/shared'
 import type { Agent } from '../llm/agent.js'
 import type { ConversationScope, ConversationService } from '../llm/conversation-service.js'
 import { handleApprovalInteraction, type PendingApproval, replyEphemeral, type RepliableInteraction } from './discord-approval-interactions.js'
@@ -32,8 +33,9 @@ const REQUEST_STOPPED_MESSAGE = '请求已停止。'
 const QUEUED_REQUEST_NOTICE = '当前机器人还有其他请求正在处理，已加入队列。可通过 /stop 停止当前频道或话题中的请求。'
 
 type MsgPayload = {
-  content: string
+  content?: string
   components?: ActionRowBuilder<ButtonBuilder>[]
+  files?: AttachmentBuilder[]
 }
 
 type QueuedRequest = {
@@ -327,6 +329,7 @@ export class DiscordAdapter {
     let toolProgressMessage: Message | undefined
     let pendingApprovalMessage: PendingApprovalMessage | undefined
     const assistantMessages: { message: Message; content: string }[] = []
+    const outputArtifacts: ToolExecutionArtifact[] = []
 
     const renderToolContent = () => {
       const currentEntry = pendingApprovalMessage?.entry ?? logEntries.at(-1)
@@ -585,6 +588,9 @@ export class DiscordAdapter {
           break
         }
         case 'tool_result':
+          if (event.ok && event.artifacts?.length) {
+            outputArtifacts.push(...event.artifacts)
+          }
           if (toolProcessMode === 'full') {
             this.throwIfStopped(abortSignal)
             await setToolLog(this.formatToolResult({ ...event, callId: getToolDisplayId(event.callId) }, toolCallSummaries.get(event.callId)))
@@ -611,7 +617,29 @@ export class DiscordAdapter {
       await syncAssistantMessages()
     }
 
+    if (outputArtifacts.length > 0) {
+      this.throwIfStopped(abortSignal)
+      await this.sendArtifacts(createMessage, outputArtifacts)
+    }
+
     return fullContent
+  }
+
+  private async sendArtifacts(createMessage: CreateMessage, artifacts: ToolExecutionArtifact[]) {
+    const sent = new Set<string>()
+
+    for (const artifact of artifacts) {
+      if (artifact.kind !== 'image' || sent.has(artifact.filePath)) {
+        continue
+      }
+
+      sent.add(artifact.filePath)
+
+      await createMessage({
+        content: artifact.alt?.trim() || undefined,
+        files: [new AttachmentBuilder(artifact.filePath, { name: artifact.fileName })],
+      })
+    }
   }
 
   private stopScopeRequests(scopeKey: string) {

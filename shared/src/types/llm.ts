@@ -9,6 +9,21 @@ export interface LLMConfig {
   baseUrl?: string
 }
 
+export interface ToolExecutionArtifact {
+  kind: 'image'
+  filePath: string
+  fileName: string
+  mimeType: 'image/png'
+  alt?: string
+}
+
+export interface ToolExecutionResult {
+  content: string
+  artifacts?: ToolExecutionArtifact[]
+}
+
+export type LLMToolExecuteResult = string | ToolExecutionResult
+
 export interface LLMTool {
   name: string
   description: string
@@ -17,7 +32,7 @@ export interface LLMTool {
   /** Whether this tool requires explicit user approval in sensitive mode. */
   sensitive?: boolean
   parameters: Record<string, unknown>
-  execute: (args: Record<string, unknown>) => Promise<string>
+  execute: (args: Record<string, unknown>) => Promise<LLMToolExecuteResult>
 }
 
 export interface ChatMessageTextPart {

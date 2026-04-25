@@ -1,7 +1,8 @@
 import OpenAI from 'openai'
-import type { AgentEvent, ChatMessage, LLMTool } from '@zakobot/shared'
+import type { AgentEvent, ChatMessage, LLMTool, ToolExecutionArtifact } from '@zakobot/shared'
 import type { LLMChatOptions, LLMRequestOptions, LLMStreamOptions } from '../provider-types.js'
 import { escapeLogMessage, formatDeniedToolResult, formatLogValue, splitSegments } from '../provider-utils.js'
+import { normalizeToolExecutionResult } from '../../tools/tool-result.js'
 
 export type OpenAIProviderDeps = {
   client: OpenAI
@@ -131,6 +132,7 @@ export async function* chatStreamOpenAI(
       yield { type: 'tool_call', callId: toolCall.id, name: toolCall.function.name, input: args }
 
       let result: string
+      let artifacts: ToolExecutionArtifact[] = []
       let ok = true
 
       try {
@@ -150,8 +152,10 @@ export async function* chatStreamOpenAI(
         }
 
         console.log(`[ToolCall] ${toolCall.function.name} ${formatLogValue(args)}`)
-        result = await tool.execute(args)
-        console.log(`[ToolResult] ${toolCall.function.name} ok length=${result.length}`)
+        const execution = normalizeToolExecutionResult(await tool.execute(args))
+        result = execution.content
+        artifacts = execution.artifacts
+        console.log(`[ToolResult] ${toolCall.function.name} ok length=${result.length} artifacts=${artifacts.length}`)
       }
       catch (error) {
         result = `Error: ${error instanceof Error ? error.message : String(error)}`
@@ -159,7 +163,7 @@ export async function* chatStreamOpenAI(
         console.warn(`[ToolResult] ${toolCall.function.name} error="${escapeLogMessage(result)}"`)
       }
 
-      yield { type: 'tool_result', callId: toolCall.id, name: toolCall.function.name, result, ok }
+      yield { type: 'tool_result', callId: toolCall.id, name: toolCall.function.name, result, ok, artifacts }
       toolResultMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
     }
 
@@ -266,7 +270,7 @@ async function executeToolCalls(
       }
 
       console.log(`[ToolCall] ${tool.name} ${formatLogValue(args)}`)
-      result = await tool.execute(args)
+      result = normalizeToolExecutionResult(await tool.execute(args)).content
       console.log(`[ToolResult] ${tool.name} ok length=${result.length}`)
     }
     catch (error) {

@@ -313,6 +313,7 @@ const toolGroups: ToolGroup[] = [
       { value: 'file_write', label: '文件写入', description: '创建或覆盖写入文件，父目录不存在时自动创建。', sensitive: true },
       { value: 'file_edit', label: '文件编辑', description: '精确字符串替换，要求目标字符串在文件中唯一出现。', sensitive: true },
       { value: 'file_list', label: '目录列表', description: '列出目录中的文件和子目录，支持递归。' },
+      { value: 'render_markdown_table_image', label: '表格转图片', description: '将 Markdown 表格渲染为简约 PNG 图片，适合发到 Discord。' },
     ],
   },
 ]

@@ -65,7 +65,8 @@ export class Agent {
       throw new Error(`Tool "${name}" is not available`)
     }
 
-    return tool.execute(args)
+    const result = await tool.execute(args)
+    return typeof result === 'string' ? result : result.content
   }
 
   async explainToolIntent(topicId: string, name: string, input: unknown, question?: string): Promise<string> {
