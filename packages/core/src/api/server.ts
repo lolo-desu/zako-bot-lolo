@@ -17,28 +17,36 @@ import {
   updateMcpServer,
   updateRole,
 } from '@zakobot/database'
-import type { DB, McpServerRow } from '@zakobot/database'
+import type { DB } from '@zakobot/database'
 import type { BotManager } from '../bot/bot-manager.js'
 import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
 import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile, toRoleProfile } from './serializers.js'
-import { getSearchSettings, normalizeSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
-import { getBrowseSettings, normalizeBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
-import { getGeneralSettings, normalizeGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
-import { getLocalMemorySettings, normalizeLocalMemorySettings, saveLocalMemorySettings } from '../settings/local-memory-settings.js'
+import {
+  parseBotInput,
+  parseBrowseSettingsInput,
+  parseCreateConversationTopicInput,
+  parseGeneralSettingsInput,
+  parseLocalMemorySettingsInput,
+  parseMcpServerInput,
+  parseRoleInput,
+  parseSearchSettingsInput,
+  parseSendConversationMessageInput,
+  parseSkillImportInput,
+  parseSkillInput,
+} from './validators.js'
+import { getSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
+import { getBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
+import { getGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
+import { getLocalMemorySettings, saveLocalMemorySettings } from '../settings/local-memory-settings.js'
 import type {
   ApiResponse,
   BotEditorInput,
   CreateConversationTopicInput,
-  RoleEditorInput,
-  BrowseSettings,
-  GeneralSettings,
-  LocalMemorySettings,
   McpServerEditorInput,
   McpServerStatus,
-  SearchSettings,
   SendConversationMessageInput,
   SendConversationMessageResult,
   SkillContent,
@@ -176,260 +184,6 @@ export class ApiServer {
     return writeApiError(res, error, fallback, status)
   }
 
-  private parseRoleInput(body: Partial<RoleEditorInput>) {
-    const name = body.name?.trim()
-    const systemPrompt = body.systemPrompt?.trim()
-
-    if (!name) {
-      throw new Error('Role name is required')
-    }
-
-    if (!systemPrompt) {
-      throw new Error('Role systemPrompt is required')
-    }
-
-    const enabledTools = this.normalizeEnabledTools(body.enabledTools)
-    const enabledSkills = this.normalizeEnabledSkills(body.enabledSkills)
-
-    return {
-      avatar: body.avatar?.trim() ?? '',
-      name,
-      systemPrompt,
-      enabledTools,
-      enabledSkills,
-    }
-  }
-
-  private parseSkillInput(body: Partial<SkillEditorInput>): SkillEditorInput {
-    const content = body.content?.trim()
-    const name = body.name?.trim() ?? ''
-    const description = body.description?.trim() ?? ''
-
-    if (!content) {
-      throw new Error('Skill content is required')
-    }
-
-    return {
-      name,
-      description,
-      content,
-      enabled: body.enabled === false ? false : true,
-      requiredTools: this.normalizeEnabledTools(body.requiredTools),
-    }
-  }
-
-  private parseSkillImportInput(body: Partial<SkillImportInput>): SkillImportInput {
-    const fileName = body.fileName?.trim()
-    const contentBase64 = body.contentBase64?.trim()
-    const sourceType = body.sourceType === 'md' || body.sourceType === 'zip' ? body.sourceType : undefined
-
-    if (!fileName) {
-      throw new Error('Skill file name is required')
-    }
-
-    if (!contentBase64) {
-      throw new Error('Skill file content is required')
-    }
-
-    return { fileName, contentBase64, sourceType }
-  }
-
-  private parseBotInput(body: Partial<BotEditorInput>) {
-    const name = body.name?.trim()
-    const token = body.token?.trim()
-    const roleId = body.roleId?.trim()
-    const llmPlatformName = body.llmPlatformName?.trim()
-    const llmModel = body.llmModel?.trim()
-    const llmApiKey = body.llmApiKey?.trim()
-    const llmBaseUrl = body.llmBaseUrl?.trim()
-    const discordUserId = body.discordUserId?.trim()
-    const discordChannelId = body.discordChannelId?.trim()
-    const discordGuildId = body.discordGuildId?.trim()
-    const platform = body.platform?.trim()
-
-    if (!name) throw new Error('Bot name is required')
-    if (!platform) throw new Error('Bot platform is required')
-    if (platform !== 'discord') throw new Error('Only Discord bots are currently supported')
-    if (!token) throw new Error('Bot token is required')
-    if (!roleId) throw new Error('Role is required')
-    if (!llmPlatformName) throw new Error('Model platform is required')
-    if (!llmModel) throw new Error('Model is required')
-    if (!llmApiKey) throw new Error('Model API key is required')
-    if (!llmBaseUrl) throw new Error('Model base URL is required')
-    if (!discordGuildId) throw new Error('Discord guild ID is required')
-
-    return {
-      name,
-      platform: 'discord' as const,
-      token,
-      roleId,
-      llmProvider: 'openai' as const,
-      llmPlatformName,
-      llmModel,
-      llmApiKey,
-      llmBaseUrl,
-      discordUserId,
-      discordChannelId,
-      discordGuildId,
-      enabled: Boolean(body.enabled),
-    }
-  }
-
-  private parseCreateConversationTopicInput(body: Partial<CreateConversationTopicInput>) {
-    const botInstanceId = body.botInstanceId?.trim()
-
-    if (!botInstanceId) {
-      throw new Error('Bot instance ID is required')
-    }
-
-    return { botInstanceId }
-  }
-
-  private parseSendConversationMessageInput(body: Partial<SendConversationMessageInput>) {
-    const botInstanceId = body.botInstanceId?.trim()
-    const topicId = body.topicId?.trim()
-    const content = body.content?.trim()
-
-    if (!botInstanceId) {
-      throw new Error('Bot instance ID is required')
-    }
-
-    if (!content) {
-      throw new Error('Message content is required')
-    }
-
-    return {
-      botInstanceId,
-      topicId: topicId || undefined,
-      content,
-    }
-  }
-
-  private parseMcpServerInput(body: Partial<McpServerEditorInput>): Omit<McpServerRow, 'id' | 'createdAt' | 'updatedAt'> {
-    const name = body.name?.trim()
-    const description = body.description?.trim() ?? ''
-    const transport = body.transport
-    const command = body.command?.trim() ?? ''
-    const args = Array.isArray(body.args) ? body.args.filter((item): item is string => typeof item === 'string') : []
-    const env = this.normalizeStringRecord(body.env)
-    const url = body.url?.trim() ?? ''
-
-    if (!name) {
-      throw new Error('MCP server name is required')
-    }
-
-    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      throw new Error('MCP server name can only contain letters, numbers, underscores and hyphens')
-    }
-
-    if (transport !== 'stdio' && transport !== 'sse') {
-      throw new Error('MCP transport must be stdio or sse')
-    }
-
-    if (transport === 'stdio' && !command) {
-      throw new Error('MCP stdio command is required')
-    }
-
-    if (transport === 'sse') {
-      if (!url) {
-        throw new Error('MCP SSE URL is required')
-      }
-
-      try {
-        new URL(url)
-      }
-      catch {
-        throw new Error('MCP SSE URL is invalid')
-      }
-    }
-
-    return {
-      name,
-      description,
-      transport,
-      command,
-      args: JSON.stringify(args),
-      env: JSON.stringify(env),
-      url,
-      enabled: body.enabled === false ? false : true,
-    }
-  }
-
-  private parseGeneralSettingsInput(body: Partial<GeneralSettings>): GeneralSettings {
-    return normalizeGeneralSettings(body as Record<string, unknown>)
-  }
-
-  private parseSearchSettingsInput(body: Partial<SearchSettings>): SearchSettings {
-    return normalizeSearchSettings(body as Partial<SearchSettings> & Record<string, unknown>)
-  }
-
-  private parseBrowseSettingsInput(body: Partial<BrowseSettings>): BrowseSettings {
-    return normalizeBrowseSettings(body as Record<string, unknown>)
-  }
-
-  private parseLocalMemorySettingsInput(body: Partial<LocalMemorySettings>): LocalMemorySettings {
-    return normalizeLocalMemorySettings(body as Record<string, unknown>)
-  }
-
-  private normalizeStringRecord(value: unknown): Record<string, string> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return {}
-    }
-
-    return Object.fromEntries(
-      Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-    )
-  }
-
-  private normalizeEnabledTools(value: unknown): string[] {
-    if (!Array.isArray(value)) {
-      return []
-    }
-
-    const builtinTools = new Set<string>(['web_search', 'web_browse', 'shell_exec', 'file_read', 'file_write', 'file_edit', 'file_list'])
-    const result: string[] = []
-    const seen = new Set<string>()
-
-    for (const tool of value) {
-      if (typeof tool !== 'string' || seen.has(tool)) {
-        continue
-      }
-
-      seen.add(tool)
-
-      if (builtinTools.has(tool) || /^mcp__[a-zA-Z0-9_-]+__.+$/.test(tool)) {
-        result.push(tool)
-      }
-    }
-
-    return result
-  }
-
-  private normalizeEnabledSkills(value: unknown): string[] {
-    if (!Array.isArray(value)) {
-      return []
-    }
-
-    const result: string[] = []
-    const seen = new Set<string>()
-
-    for (const skillId of value) {
-      if (typeof skillId !== 'string') {
-        continue
-      }
-
-      const normalized = skillId.trim()
-      if (!normalized || seen.has(normalized)) {
-        continue
-      }
-
-      seen.add(normalized)
-      result.push(normalized)
-    }
-
-    return result
-  }
-
   private listMcpStatus(): McpServerStatus[] {
     const statusById = new Map(this.mcpManager.getStatus().map(status => [status.id, status]))
 
@@ -473,7 +227,7 @@ export class ApiServer {
 
     if (pathname === '/skills' && req.method === 'POST') {
       try {
-        const payload = this.parseSkillInput(await this.readJson<SkillEditorInput>(req))
+        const payload = parseSkillInput(await this.readJson<SkillEditorInput>(req))
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.create(payload) }, 201)
       }
       catch (error) {
@@ -483,7 +237,7 @@ export class ApiServer {
 
     if (pathname === '/skills/import' && req.method === 'POST') {
       try {
-        const payload = this.parseSkillImportInput(await this.readJson<SkillImportInput>(req))
+        const payload = parseSkillImportInput(await this.readJson<SkillImportInput>(req))
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.import(payload) }, 201)
       }
       catch (error) {
@@ -504,7 +258,7 @@ export class ApiServer {
 
     if (pathname === '/mcp/servers' && req.method === 'POST') {
       try {
-        const payload = this.parseMcpServerInput(await this.readJson<McpServerEditorInput>(req))
+        const payload = parseMcpServerInput(await this.readJson<McpServerEditorInput>(req))
         const created = createMcpServer(this.db, payload)
 
         if (created.enabled) {
@@ -526,7 +280,7 @@ export class ApiServer {
 
     if (pathname === '/settings/search' && req.method === 'PUT') {
       try {
-        const payload = this.parseSearchSettingsInput(await this.readJson<SearchSettings>(req))
+        const payload = parseSearchSettingsInput(await this.readJson(req))
         return this.json(res, { ok: true, data: saveSearchSettings(this.db, payload) })
       }
       catch (error) {
@@ -540,7 +294,7 @@ export class ApiServer {
 
     if (pathname === '/settings/browse' && req.method === 'PUT') {
       try {
-        const payload = this.parseBrowseSettingsInput(await this.readJson<BrowseSettings>(req))
+        const payload = parseBrowseSettingsInput(await this.readJson(req))
         return this.json(res, { ok: true, data: saveBrowseSettings(this.db, payload) })
       }
       catch (error) {
@@ -554,7 +308,7 @@ export class ApiServer {
 
     if (pathname === '/settings/general' && req.method === 'PUT') {
       try {
-        const payload = this.parseGeneralSettingsInput(await this.readJson<GeneralSettings>(req))
+        const payload = parseGeneralSettingsInput(await this.readJson(req))
         return this.json(res, { ok: true, data: saveGeneralSettings(this.db, payload) })
       }
       catch (error) {
@@ -568,7 +322,7 @@ export class ApiServer {
 
     if (pathname === '/settings/memory' && req.method === 'PUT') {
       try {
-        const payload = this.parseLocalMemorySettingsInput(await this.readJson<LocalMemorySettings>(req))
+        const payload = parseLocalMemorySettingsInput(await this.readJson(req))
         return this.json(res, { ok: true, data: saveLocalMemorySettings(this.db, payload) })
       }
       catch (error) {
@@ -612,7 +366,7 @@ export class ApiServer {
       }
 
       try {
-        const payload = this.parseMcpServerInput(await this.readJson<McpServerEditorInput>(req))
+        const payload = parseMcpServerInput(await this.readJson<McpServerEditorInput>(req))
         const updated = updateMcpServer(this.db, mcpServerMatch[1], payload)
 
         if (!updated) {
@@ -658,7 +412,7 @@ export class ApiServer {
 
     if (pathname === '/roles' && req.method === 'POST') {
       try {
-        const payload = this.parseRoleInput(await this.readJson<RoleEditorInput>(req))
+        const payload = parseRoleInput(await this.readJson(req))
         const now = new Date()
         const created = createRole(this.db, {
           id: randomUUID(),
@@ -712,7 +466,7 @@ export class ApiServer {
 
     if (pathname === '/conversations' && req.method === 'POST') {
       try {
-        const payload = this.parseCreateConversationTopicInput(await this.readJson<CreateConversationTopicInput>(req))
+        const payload = parseCreateConversationTopicInput(await this.readJson<CreateConversationTopicInput>(req))
         const topic = this.botManager.startPanelConversation(payload.botInstanceId)
         return this.json(res, { ok: true, data: toConversationTopic(topic) }, 201)
       }
@@ -725,7 +479,7 @@ export class ApiServer {
 
     if (pathname === '/conversations/messages' && req.method === 'POST') {
       try {
-        const payload = this.parseSendConversationMessageInput(await this.readJson<SendConversationMessageInput>(req))
+        const payload = parseSendConversationMessageInput(await this.readJson<SendConversationMessageInput>(req))
         const result = await this.botManager.sendPanelMessage(payload.botInstanceId, payload.content, payload.topicId)
         const data: SendConversationMessageResult = {
           topic: toConversationTopic(result.topic),
@@ -763,7 +517,7 @@ export class ApiServer {
 
     if (pathname === '/bots' && req.method === 'POST') {
       try {
-        const payload = this.parseBotInput(await this.readJson<BotEditorInput>(req))
+        const payload = parseBotInput(await this.readJson<BotEditorInput>(req))
 
         if (!getRole(this.db, payload.roleId)) {
           return this.json(res, { ok: false, error: 'Role not found' }, 404)
@@ -823,7 +577,7 @@ export class ApiServer {
       }
 
       try {
-        const payload = this.parseRoleInput(await this.readJson<RoleEditorInput>(req))
+        const payload = parseRoleInput(await this.readJson(req))
         const updated = updateRole(this.db, roleMatch[1], {
           avatar: payload.avatar,
           name: payload.name,
@@ -867,7 +621,7 @@ export class ApiServer {
       }
 
       try {
-        const payload = this.parseSkillInput(await this.readJson<SkillEditorInput>(req))
+        const payload = parseSkillInput(await this.readJson<SkillEditorInput>(req))
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.update(skillMatch[1], payload) })
       }
       catch (error) {
@@ -926,7 +680,7 @@ export class ApiServer {
       }
 
       try {
-        const payload = this.parseBotInput(await this.readJson<BotEditorInput>(req))
+        const payload = parseBotInput(await this.readJson<BotEditorInput>(req))
 
         if (!getRole(this.db, payload.roleId)) {
           return this.json(res, { ok: false, error: 'Role not found' }, 404)

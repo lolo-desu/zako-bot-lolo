@@ -25,7 +25,7 @@ Status: In progress
 
 - [ ] Extract route handlers by domain: status/plugins, settings, bots, roles, conversations, MCP, skills.
 - [x] Extract serializers for bot, role, conversation, MCP profiles.
-- [ ] Extract request validators/normalizers for editor payloads.
+- [x] Extract request validators/normalizers for editor payloads.
 - [ ] Keep `ApiServer` as a thin router/server coordinator.
 - [ ] Build `@zakobot/core`.
 - [ ] Commit and deploy.
