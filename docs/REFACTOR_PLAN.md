@@ -21,7 +21,7 @@ Status: Completed
 
 ## Phase 2: Core API Routes
 
-Status: In progress
+Status: Completed
 
 - [x] Extract route handlers by domain: status/plugins, settings, bots, roles, conversations, MCP, skills.
 - [x] Extract status/plugins routes.
@@ -33,15 +33,15 @@ Status: In progress
 - [x] Extract MCP routes.
 - [x] Extract serializers for bot, role, conversation, MCP profiles.
 - [x] Extract request validators/normalizers for editor payloads.
-- [ ] Keep `ApiServer` as a thin router/server coordinator.
-- [ ] Build `@zakobot/core`.
-- [ ] Commit and deploy.
+- [x] Keep `ApiServer` as a thin router/server coordinator.
+- [x] Build `@zakobot/core`.
+- [x] Commit and deploy.
 
 ## Phase 3: LLM Client Providers
 
-Status: Pending
+Status: In progress
 
-- [ ] Split OpenAI-compatible request/stream logic from `packages/core/src/llm/client.ts`.
+- [x] Split OpenAI-compatible request/stream logic from `packages/core/src/llm/client.ts`.
 - [ ] Split Vertex request/stream logic into a provider module.
 - [ ] Extract common tool execution and approval result formatting.
 - [ ] Keep public `LLMClient` behavior unchanged.

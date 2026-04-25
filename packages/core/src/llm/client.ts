@@ -1,29 +1,15 @@
 import OpenAI from 'openai'
 import { GoogleGenAI } from '@google/genai'
 import type { Content, Part, Tool as GenAITool } from '@google/genai'
-import type { AgentEvent, LLMConfig, ChatMessage, LLMTool, ToolApprovalCallback } from '@zakobot/shared'
+import type { AgentEvent, LLMConfig, ChatMessage, LLMTool } from '@zakobot/shared'
+import type { LLMChatOptions, LLMRequestOptions, LLMStreamOptions, RateLimitRetryHandler } from './provider-types.js'
+import { chatOpenAI, chatStreamOpenAI } from './providers/openai.js'
 
 const MAX_TOOL_CALL_ROUNDS = 8
 const RATE_LIMIT_MESSAGE = 'LLM 服务当前过于繁忙，请稍等片刻后重试。'
 const REQUEST_STOPPED_MESSAGE = '请求已停止。'
 const RATE_LIMIT_RETRY_DELAYS_MS = [5000, 10000] as const
 const TOOL_LIMIT_FINAL_INSTRUCTION = '你已经完成了足够的工具调用。不要再调用任何工具，直接基于现有上下文和工具结果给出最终回答。你的回答必须先简要总结你已经做了什么、当前页面/任务处于什么状态、接下来准备做什么；如果存在阻塞或信息仍不足，也必须明确说出阻塞点或缺失信息。'
-
-type RateLimitRetryHandler = (attempt: number, delayMs: number) => void | Promise<void>
-
-type LLMRequestOptions = {
-  abortSignal?: AbortSignal
-  onRateLimitRetry?: RateLimitRetryHandler
-}
-
-type LLMChatOptions = LLMRequestOptions & {
-  requestApproval?: ToolApprovalCallback
-}
-
-type LLMStreamOptions = LLMRequestOptions & {
-  maxToolCallRounds?: number
-  requestApproval?: ToolApprovalCallback
-}
 
 interface ServiceAccountCreds {
   type: string
@@ -96,54 +82,7 @@ export class LLMClient {
       return this.chatVertex(messages, tools, maxToolCallRounds, options)
     }
 
-    const requestMessages: OpenAI.Chat.ChatCompletionMessageParam[] = messages.map(m => this.toOpenAIMessage(m))
-    const toolDefinitions = this.buildToolDefinitions(tools)
-
-    for (let i = 0; i < maxToolCallRounds; i += 1) {
-      this.throwIfAborted(options.abortSignal)
-      const response = await this.requestWithRetry(() => this.openai!.chat.completions.create({
-        model: this.config.model,
-        messages: requestMessages,
-        ...(toolDefinitions.length > 0
-          ? {
-              tools: toolDefinitions,
-              tool_choice: 'auto' as const,
-            }
-          : {}),
-      }), options)
-
-      const message = response.choices[0]?.message
-
-      if (!message) throw new Error('LLM returned empty response')
-
-      if (!message.tool_calls || message.tool_calls.length === 0) {
-        return message.content ?? ''
-      }
-
-      requestMessages.push(this.toAssistantToolCallMessage(message))
-      requestMessages.push(...await this.executeToolCalls(message, tools, options))
-    }
-
-    console.warn(`[LLM] Reached tool-call limit (${maxToolCallRounds}); requesting final answer without tools.`)
-
-      const finalResponse = await this.requestWithRetry(() => this.openai!.chat.completions.create({
-      model: this.config.model,
-      messages: [
-        ...requestMessages,
-        {
-          role: 'system',
-          content: TOOL_LIMIT_FINAL_INSTRUCTION,
-        },
-      ],
-    }), options)
-
-    const finalMessage = finalResponse.choices[0]?.message
-
-    if (!finalMessage) {
-      throw new Error('LLM returned empty response after tool-call limit')
-    }
-
-    return finalMessage.content ?? ''
+    return chatOpenAI(this.getOpenAIProviderDeps(), messages, tools, maxToolCallRounds, options, TOOL_LIMIT_FINAL_INSTRUCTION)
   }
 
   async *chatStream(
@@ -156,123 +95,23 @@ export class LLMClient {
       return
     }
 
-    const {
-      maxToolCallRounds = MAX_TOOL_CALL_ROUNDS,
-      requestApproval,
-      abortSignal,
-      onRateLimitRetry,
-    } = options
-    const requestMessages: OpenAI.Chat.ChatCompletionMessageParam[] = messages.map(m => this.toOpenAIMessage(m))
-    const toolDefinitions = this.buildToolDefinitions(tools)
+    yield* chatStreamOpenAI(this.getOpenAIProviderDeps(), messages, tools, {
+      ...options,
+      maxToolCallRounds: options.maxToolCallRounds ?? MAX_TOOL_CALL_ROUNDS,
+    }, TOOL_LIMIT_FINAL_INSTRUCTION)
+  }
 
-    for (let round = 0; round < maxToolCallRounds; round++) {
-      this.throwIfAborted(abortSignal)
-      const response = await this.requestWithRetry(() => this.openai!.chat.completions.create({
-        model: this.config.model,
-        messages: requestMessages,
-        ...(toolDefinitions.length > 0
-          ? { tools: toolDefinitions, tool_choice: 'auto' as const }
-          : {}),
-      }), { abortSignal, onRateLimitRetry })
-
-      const message = response.choices[0]?.message
-      if (!message) throw new Error('LLM returned empty response')
-
-      const toolCalls = message.tool_calls ?? []
-      const hasToolCalls = toolCalls.length > 0
-
-      // Some providers leak internal tool markup into assistant content while also
-      // returning structured tool_calls. Keep that content out of the user-facing
-      // stream and wait for the final post-tool answer instead.
-      if (message.content && !hasToolCalls) {
-        for (const segment of this.splitSegments(message.content)) {
-          yield { type: 'text_chunk', content: segment }
-        }
-      }
-
-      if (!hasToolCalls) {
-        yield { type: 'done', content: message.content ?? '' }
-        return
-      }
-
-      requestMessages.push(this.toAssistantToolCallMessage(message))
-
-      const toolResultMessages: OpenAI.Chat.ChatCompletionMessageParam[] = []
-      for (const toolCall of toolCalls) {
-        if (toolCall.type !== 'function') continue
-
-        const tool = tools.find(t => t.name === toolCall.function.name)
-        let args: Record<string, unknown>
-        try {
-          args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
-        }
-        catch {
-          args = {}
-        }
-
-        yield { type: 'tool_call', callId: toolCall.id, name: toolCall.function.name, input: args }
-
-        let result: string
-        let ok = true
-
-        try {
-          if (!tool) throw new Error(`Tool "${toolCall.function.name}" is not available`)
-
-          if (requestApproval) {
-            const decision = await requestApproval(toolCall.id, toolCall.function.name, args)
-            if (!decision.approved) {
-              result = decision.guidance?.trim()
-                ? `User denied this tool call. Guidance: ${decision.guidance.trim()}`
-                : decision.reason?.trim()
-                    ? `User denied this tool call. Reason: ${decision.reason.trim()}`
-                    : 'User denied this tool call.'
-              ok = false
-              yield { type: 'tool_result', callId: toolCall.id, name: toolCall.function.name, result, ok }
-              toolResultMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-              continue
-            }
-          }
-
-          console.log(`[ToolCall] ${toolCall.function.name} ${this.formatLogValue(args)}`)
-          result = await tool.execute(args)
-          console.log(`[ToolResult] ${toolCall.function.name} ok length=${result.length}`)
-        }
-        catch (err) {
-          result = `Error: ${err instanceof Error ? err.message : String(err)}`
-          ok = false
-          console.warn(`[ToolResult] ${toolCall.function.name} error="${this.escapeLogMessage(result)}"`)
-        }
-
-        yield { type: 'tool_result', callId: toolCall.id, name: toolCall.function.name, result, ok }
-        toolResultMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
-      }
-
-      requestMessages.push(...toolResultMessages)
-    }
-
-    console.warn(`[LLM] Reached tool-call limit (${maxToolCallRounds}); requesting final answer without tools.`)
-    yield { type: 'tool_limit_reached', limit: maxToolCallRounds }
-    const finalResponse = await this.requestWithRetry(() => this.openai!.chat.completions.create({
+  private getOpenAIProviderDeps() {
+    return {
+      client: this.openai!,
       model: this.config.model,
-      messages: [
-        ...requestMessages,
-        {
-          role: 'system',
-          content: TOOL_LIMIT_FINAL_INSTRUCTION,
-        },
-      ],
-    }), { abortSignal, onRateLimitRetry })
-
-    const finalMessage = finalResponse.choices[0]?.message
-    if (!finalMessage) throw new Error('LLM returned empty response after tool-call limit')
-
-    if (finalMessage.content) {
-      for (const segment of this.splitSegments(finalMessage.content)) {
-        yield { type: 'text_chunk', content: segment }
-      }
+      escapeLogMessage: (value: string) => this.escapeLogMessage(value),
+      formatDeniedToolResult: (decision: { reason?: string, guidance?: string }) => this.formatDeniedToolResult(decision),
+      formatLogValue: (value: unknown) => this.formatLogValue(value),
+      requestWithRetry: <T>(operation: () => Promise<T>, options: LLMRequestOptions = {}) => this.requestWithRetry(operation, options),
+      splitSegments: (text: string, maxLength = 1800) => this.splitSegments(text, maxLength),
+      throwIfAborted: (signal?: AbortSignal) => this.throwIfAborted(signal),
     }
-
-    yield { type: 'done', content: finalMessage.content ?? '' }
   }
 
   // ── Vertex AI (Google GenAI SDK) ──────────────────────────────────────────
@@ -446,28 +285,6 @@ export class LLMClient {
     yield { type: 'done', content: finalText }
   }
 
-  private toOpenAIMessage(msg: ChatMessage): OpenAI.Chat.ChatCompletionMessageParam {
-    if (msg.role === 'system') {
-      const text = typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('')
-      return { role: 'system', content: text }
-    }
-    if (msg.role === 'assistant') {
-      const text = typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('')
-      return { role: 'assistant', content: text }
-    }
-    if (typeof msg.content === 'string') {
-      return { role: 'user', content: msg.content }
-    }
-    return {
-      role: 'user',
-      content: msg.content.map(p =>
-        p.type === 'text'
-          ? { type: 'text' as const, text: p.text }
-          : { type: 'image_url' as const, image_url: { url: p.image_url.url } },
-      ),
-    }
-  }
-
   private async toGenAIContents(messages: ChatMessage[]): Promise<{ systemInstruction: string; contents: Content[] }> {
     const systemParts: string[] = []
     const contents: Content[] = []
@@ -536,99 +353,12 @@ export class LLMClient {
     return result
   }
 
-  private buildToolDefinitions(tools: LLMTool[]): OpenAI.Chat.ChatCompletionTool[] {
-    return tools.map((tool) => ({
-      type: 'function',
-      function: {
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters,
-      },
-    }))
-  }
-
-  private async executeToolCalls(
-    assistantMessage: OpenAI.Chat.ChatCompletionMessage,
-    tools: LLMTool[],
-    options: LLMChatOptions,
-  ): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
-    const toolCallMessages: OpenAI.Chat.ChatCompletionMessageParam[] = []
-
-    for (const toolCall of assistantMessage.tool_calls ?? []) {
-      if (toolCall.type !== 'function') continue
-      const tool = tools.find((t) => t.name === toolCall.function.name)
-
-      let result: string
-      try {
-        if (!tool) {
-          throw new Error(`Tool "${toolCall.function.name}" is not available`)
-        }
-
-        const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
-
-        if (options.requestApproval) {
-          const decision = await options.requestApproval(toolCall.id, tool.name, args)
-          if (!decision.approved) {
-            result = this.formatDeniedToolResult(decision)
-            toolCallMessages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: result,
-            })
-            continue
-          }
-        }
-
-        console.log(`[ToolCall] ${tool.name} ${this.formatLogValue(args)}`)
-        result = await tool.execute(args)
-        console.log(`[ToolResult] ${tool.name} ok length=${result.length}`)
-      } catch (err) {
-        result = `Error: ${err instanceof Error ? err.message : String(err)}`
-        console.warn(`[ToolResult] ${toolCall.function.name} error="${this.escapeLogMessage(result)}"`)
-      }
-
-      toolCallMessages.push({
-        role: 'tool',
-        tool_call_id: toolCall.id,
-        content: result,
-      })
-    }
-
-    return toolCallMessages
-  }
-
   private formatDeniedToolResult(decision: { reason?: string; guidance?: string }) {
     return decision.guidance?.trim()
       ? `User denied this tool call. Guidance: ${decision.guidance.trim()}`
       : decision.reason?.trim()
           ? `User denied this tool call. Reason: ${decision.reason.trim()}`
           : 'User denied this tool call.'
-  }
-
-  private toAssistantToolCallMessage(
-    message: OpenAI.Chat.ChatCompletionMessage,
-  ): OpenAI.Chat.ChatCompletionAssistantMessageParam {
-    const functionToolCalls = (message.tool_calls ?? [])
-      .filter((toolCall): toolCall is OpenAI.Chat.ChatCompletionMessageFunctionToolCall =>
-        toolCall.type === 'function',
-      )
-
-    return {
-      role: 'assistant',
-      content: message.content ?? '',
-      ...(functionToolCalls.length
-        ? {
-            tool_calls: functionToolCalls.map((toolCall) => ({
-              id: toolCall.id,
-              type: 'function',
-              function: {
-                name: toolCall.function.name,
-                arguments: toolCall.function.arguments,
-              },
-            })),
-          }
-        : {}),
-    }
   }
 
   private formatLogValue(value: unknown) {
