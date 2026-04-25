@@ -1,15 +1,12 @@
 import OpenAI from 'openai'
 import type { AgentEvent, ChatMessage, LLMTool } from '@zakobot/shared'
 import type { LLMChatOptions, LLMRequestOptions, LLMStreamOptions } from '../provider-types.js'
+import { escapeLogMessage, formatDeniedToolResult, formatLogValue, splitSegments } from '../provider-utils.js'
 
 export type OpenAIProviderDeps = {
   client: OpenAI
   model: string
-  escapeLogMessage: (value: string) => string
-  formatDeniedToolResult: (decision: { reason?: string, guidance?: string }) => string
-  formatLogValue: (value: unknown) => string
   requestWithRetry: <T>(operation: () => Promise<T>, options?: LLMRequestOptions) => Promise<T>
-  splitSegments: (text: string, maxLength?: number) => string[]
   throwIfAborted: (signal?: AbortSignal) => void
 }
 
@@ -110,7 +107,7 @@ export async function* chatStreamOpenAI(
     // returning structured tool_calls. Keep that content out of the user-facing
     // stream and wait for the final post-tool answer instead.
     if (message.content && !hasToolCalls) {
-      for (const segment of deps.splitSegments(message.content)) {
+      for (const segment of splitSegments(message.content)) {
         yield { type: 'text_chunk', content: segment }
       }
     }
@@ -144,7 +141,7 @@ export async function* chatStreamOpenAI(
         if (requestApproval) {
           const decision = await requestApproval(toolCall.id, toolCall.function.name, args)
           if (!decision.approved) {
-            result = deps.formatDeniedToolResult(decision)
+            result = formatDeniedToolResult(decision)
             ok = false
             yield { type: 'tool_result', callId: toolCall.id, name: toolCall.function.name, result, ok }
             toolResultMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: result })
@@ -152,14 +149,14 @@ export async function* chatStreamOpenAI(
           }
         }
 
-        console.log(`[ToolCall] ${toolCall.function.name} ${deps.formatLogValue(args)}`)
+        console.log(`[ToolCall] ${toolCall.function.name} ${formatLogValue(args)}`)
         result = await tool.execute(args)
         console.log(`[ToolResult] ${toolCall.function.name} ok length=${result.length}`)
       }
       catch (error) {
         result = `Error: ${error instanceof Error ? error.message : String(error)}`
         ok = false
-        console.warn(`[ToolResult] ${toolCall.function.name} error="${deps.escapeLogMessage(result)}"`)
+        console.warn(`[ToolResult] ${toolCall.function.name} error="${escapeLogMessage(result)}"`)
       }
 
       yield { type: 'tool_result', callId: toolCall.id, name: toolCall.function.name, result, ok }
@@ -188,7 +185,7 @@ export async function* chatStreamOpenAI(
   }
 
   if (finalMessage.content) {
-    for (const segment of deps.splitSegments(finalMessage.content)) {
+    for (const segment of splitSegments(finalMessage.content)) {
       yield { type: 'text_chunk', content: segment }
     }
   }
@@ -258,7 +255,7 @@ async function executeToolCalls(
       if (options.requestApproval) {
         const decision = await options.requestApproval(toolCall.id, tool.name, args)
         if (!decision.approved) {
-          result = deps.formatDeniedToolResult(decision)
+          result = formatDeniedToolResult(decision)
           toolCallMessages.push({
             role: 'tool',
             tool_call_id: toolCall.id,
@@ -268,13 +265,13 @@ async function executeToolCalls(
         }
       }
 
-      console.log(`[ToolCall] ${tool.name} ${deps.formatLogValue(args)}`)
+      console.log(`[ToolCall] ${tool.name} ${formatLogValue(args)}`)
       result = await tool.execute(args)
       console.log(`[ToolResult] ${tool.name} ok length=${result.length}`)
     }
     catch (error) {
       result = `Error: ${error instanceof Error ? error.message : String(error)}`
-      console.warn(`[ToolResult] ${toolCall.function.name} error="${deps.escapeLogMessage(result)}"`)
+      console.warn(`[ToolResult] ${toolCall.function.name} error="${escapeLogMessage(result)}"`)
     }
 
     toolCallMessages.push({

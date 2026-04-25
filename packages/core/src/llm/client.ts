@@ -103,11 +103,7 @@ export class LLMClient {
     return {
       client: this.openai!,
       model: this.config.model,
-      escapeLogMessage: (value: string) => this.escapeLogMessage(value),
-      formatDeniedToolResult: (decision: { reason?: string, guidance?: string }) => this.formatDeniedToolResult(decision),
-      formatLogValue: (value: unknown) => this.formatLogValue(value),
       requestWithRetry: <T>(operation: () => Promise<T>, options: LLMRequestOptions = {}) => this.requestWithRetry(operation, options),
-      splitSegments: (text: string, maxLength = 1800) => this.splitSegments(text, maxLength),
       throwIfAborted: (signal?: AbortSignal) => this.throwIfAborted(signal),
     }
   }
@@ -116,57 +112,9 @@ export class LLMClient {
     return {
       client: this.genai!,
       model: this.config.model,
-      escapeLogMessage: (value: string) => this.escapeLogMessage(value),
-      formatDeniedToolResult: (decision: { reason?: string, guidance?: string }) => this.formatDeniedToolResult(decision),
-      formatLogValue: (value: unknown) => this.formatLogValue(value),
       requestWithRetry: <T>(operation: () => Promise<T>, options: LLMRequestOptions = {}) => this.requestWithRetry(operation, options),
-      splitSegments: (text: string, maxLength = 1800) => this.splitSegments(text, maxLength),
       throwIfAborted: (signal?: AbortSignal) => this.throwIfAborted(signal),
     }
-  }
-
-  // ── OpenAI helpers ────────────────────────────────────────────────────────
-
-  private splitSegments(text: string, maxLength = 1800): string[] {
-    const paragraphs = text.split(/\n{2,}/).map(s => s.trim()).filter(Boolean)
-    const result: string[] = []
-    for (const para of paragraphs) {
-      if (para.length <= maxLength) {
-        result.push(para)
-      }
-      else {
-        for (let i = 0; i < para.length; i += maxLength) {
-          result.push(para.slice(i, i + maxLength))
-        }
-      }
-    }
-    return result
-  }
-
-  private formatDeniedToolResult(decision: { reason?: string; guidance?: string }) {
-    return decision.guidance?.trim()
-      ? `User denied this tool call. Guidance: ${decision.guidance.trim()}`
-      : decision.reason?.trim()
-          ? `User denied this tool call. Reason: ${decision.reason.trim()}`
-          : 'User denied this tool call.'
-  }
-
-  private formatLogValue(value: unknown) {
-    try {
-      return this.truncateLogMessage(JSON.stringify(value))
-    }
-    catch {
-      return '[unserializable]'
-    }
-  }
-
-  private escapeLogMessage(value: string) {
-    return this.truncateLogMessage(value).replaceAll('"', '\\"')
-  }
-
-  private truncateLogMessage(value: string) {
-    const normalized = value.replace(/\s+/g, ' ').trim()
-    return normalized.length > 500 ? `${normalized.slice(0, 500)}...` : normalized
   }
 
   private async requestWithRetry<T>(operation: () => Promise<T>, options: LLMRequestOptions = {}): Promise<T> {

@@ -2,17 +2,14 @@ import { GoogleGenAI } from '@google/genai'
 import type { Content, Part, Tool as GenAITool } from '@google/genai'
 import type { AgentEvent, ChatMessage, LLMTool } from '@zakobot/shared'
 import type { LLMChatOptions, LLMRequestOptions, LLMStreamOptions } from '../provider-types.js'
+import { escapeLogMessage, formatDeniedToolResult, formatLogValue, splitSegments } from '../provider-utils.js'
 
 let callCounter = 0
 
 export type VertexProviderDeps = {
   client: GoogleGenAI
   model: string
-  escapeLogMessage: (value: string) => string
-  formatDeniedToolResult: (decision: { reason?: string, guidance?: string }) => string
-  formatLogValue: (value: unknown) => string
   requestWithRetry: <T>(operation: () => Promise<T>, options?: LLMRequestOptions) => Promise<T>
-  splitSegments: (text: string, maxLength?: number) => string[]
   throwIfAborted: (signal?: AbortSignal) => void
 }
 
@@ -63,19 +60,19 @@ export async function chatVertex(
         if (options.requestApproval) {
           const decision = await options.requestApproval(genCallId(), functionCall.name!, args)
           if (!decision.approved) {
-            result = deps.formatDeniedToolResult(decision)
+            result = formatDeniedToolResult(decision)
             responseParts.push({ functionResponse: { name: functionCall.name!, response: { result } } })
             continue
           }
         }
 
-        console.log(`[ToolCall] ${functionCall.name} ${deps.formatLogValue(args)}`)
+        console.log(`[ToolCall] ${functionCall.name} ${formatLogValue(args)}`)
         result = await tool.execute(args)
         console.log(`[ToolResult] ${functionCall.name} ok length=${result.length}`)
       }
       catch (error) {
         result = `Error: ${error instanceof Error ? error.message : String(error)}`
-        console.warn(`[ToolResult] ${functionCall.name} error="${deps.escapeLogMessage(result)}"`)
+        console.warn(`[ToolResult] ${functionCall.name} error="${escapeLogMessage(result)}"`)
       }
 
       responseParts.push({ functionResponse: { name: functionCall.name!, response: { result } } })
@@ -125,7 +122,7 @@ export async function* chatStreamVertex(
     const text = parts.filter(part => part.text).map(part => part.text).join('')
 
     if (text) {
-      for (const segment of deps.splitSegments(text)) {
+      for (const segment of splitSegments(text)) {
         yield { type: 'text_chunk', content: segment }
       }
     }
@@ -157,7 +154,7 @@ export async function* chatStreamVertex(
         if (requestApproval) {
           const decision = await requestApproval(callId, functionCall.name!, args)
           if (!decision.approved) {
-            result = deps.formatDeniedToolResult(decision)
+            result = formatDeniedToolResult(decision)
             ok = false
             yield { type: 'tool_result', callId, name: functionCall.name!, result, ok }
             responseParts.push({ functionResponse: { name: functionCall.name!, response: { result } } })
@@ -165,14 +162,14 @@ export async function* chatStreamVertex(
           }
         }
 
-        console.log(`[ToolCall] ${functionCall.name} ${deps.formatLogValue(args)}`)
+        console.log(`[ToolCall] ${functionCall.name} ${formatLogValue(args)}`)
         result = await tool.execute(args)
         console.log(`[ToolResult] ${functionCall.name} ok length=${result.length}`)
       }
       catch (error) {
         result = `Error: ${error instanceof Error ? error.message : String(error)}`
         ok = false
-        console.warn(`[ToolResult] ${functionCall.name} error="${deps.escapeLogMessage(result)}"`)
+        console.warn(`[ToolResult] ${functionCall.name} error="${escapeLogMessage(result)}"`)
       }
 
       yield { type: 'tool_result', callId, name: functionCall.name!, result, ok }
@@ -192,7 +189,7 @@ export async function* chatStreamVertex(
   const finalText = final.candidates?.[0]?.content?.parts?.filter(part => part.text).map(part => part.text).join('') ?? ''
 
   if (finalText) {
-    for (const segment of deps.splitSegments(finalText)) {
+    for (const segment of splitSegments(finalText)) {
       yield { type: 'text_chunk', content: segment }
     }
   }
