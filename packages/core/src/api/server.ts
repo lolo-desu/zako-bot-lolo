@@ -52,6 +52,17 @@ import type {
   SkillProfile,
 } from '@zakobot/shared'
 
+const DEFAULT_MAX_JSON_BODY_BYTES = 1024 * 1024
+
+class HttpStatusError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message)
+  }
+}
+
 export class ApiServer {
   private server: http.Server
   private started = false
@@ -64,7 +75,16 @@ export class ApiServer {
     private skillManager: SkillManager,
   ) {
     this.server = http.createServer((req, res) => {
-      void this.handle(req, res)
+      void this.handle(req, res).catch((error) => {
+        console.error('[ApiServer] Unhandled request error:', error)
+
+        if (res.headersSent) {
+          res.destroy(error instanceof Error ? error : undefined)
+          return
+        }
+
+        this.json(res, { ok: false, error: 'Internal server error' }, 500)
+      })
     })
   }
 
@@ -153,22 +173,58 @@ export class ApiServer {
   }
 
   private json<T>(res: http.ServerResponse, data: ApiResponse<T>, status = 200) {
-    res.writeHead(status, { 'Content-Type': 'application/json' })
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
     res.end(JSON.stringify(data))
   }
 
   private async readJson<T>(req: http.IncomingMessage) {
     const chunks: Buffer[] = []
+    let totalBytes = 0
+    const maxBytes = this.maxJsonBodyBytes()
 
     for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      totalBytes += buffer.byteLength
+
+      if (totalBytes > maxBytes) {
+        throw new HttpStatusError(413, 'Request body is too large')
+      }
+
+      chunks.push(buffer)
     }
 
     if (!chunks.length) {
       return {} as T
     }
 
-    return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T
+    const raw = Buffer.concat(chunks).toString('utf8')
+    if (!raw.trim()) {
+      return {} as T
+    }
+
+    try {
+      return JSON.parse(raw) as T
+    }
+    catch {
+      throw new HttpStatusError(400, 'Invalid JSON request body')
+    }
+  }
+
+  private maxJsonBodyBytes() {
+    const configured = Number(process.env.CORE_API_MAX_BODY_BYTES)
+    return Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_MAX_JSON_BODY_BYTES
+  }
+
+  private errorMessage(error: unknown, fallback: string) {
+    return error instanceof Error && error.message ? error.message : fallback
+  }
+
+  private errorStatus(error: unknown, fallback = 400) {
+    return error instanceof HttpStatusError ? error.status : fallback
+  }
+
+  private error(res: http.ServerResponse, error: unknown, fallback: string, status = 400) {
+    return this.json(res, { ok: false, error: this.errorMessage(error, fallback) }, this.errorStatus(error, status))
   }
 
   private toRoleProfile(row: RoleRow): RoleProfile {
@@ -625,8 +681,7 @@ export class ApiServer {
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.create(payload) }, 201)
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -636,8 +691,7 @@ export class ApiServer {
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.import(payload) }, 201)
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -666,8 +720,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toMcpServerProfile(created) }, 201)
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -681,8 +734,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: saveSearchSettings(this.db, payload) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -696,8 +748,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: saveBrowseSettings(this.db, payload) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -711,8 +762,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: saveGeneralSettings(this.db, payload) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -726,8 +776,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: saveLocalMemorySettings(this.db, payload) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -744,8 +793,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toMcpServerProfile(server) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to reconnect MCP server'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Failed to reconnect MCP server')
       }
     }
 
@@ -787,8 +835,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toMcpServerProfile(updated) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -805,8 +852,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toMcpServerProfile(existing) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete MCP server'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Failed to delete MCP server')
       }
     }
 
@@ -836,8 +882,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toRoleProfile(created!) }, 201)
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -863,9 +908,9 @@ export class ApiServer {
         return this.json(res, { ok: true, data: topics })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load conversation topics'
+        const message = this.errorMessage(error, 'Failed to load conversation topics')
         const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, status)
+        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
       }
     }
 
@@ -876,9 +921,9 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toConversationTopic(topic) }, 201)
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to create conversation topic'
+        const message = this.errorMessage(error, 'Failed to create conversation topic')
         const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, status)
+        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
       }
     }
 
@@ -895,9 +940,9 @@ export class ApiServer {
         return this.json(res, { ok: true, data })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to send conversation message'
+        const message = this.errorMessage(error, 'Failed to send conversation message')
         const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, status)
+        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
       }
     }
 
@@ -914,9 +959,9 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toConversationTopic(topic) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete conversation topic'
+        const message = this.errorMessage(error, 'Failed to delete conversation topic')
         const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, status)
+        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
       }
     }
 
@@ -959,8 +1004,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toBotProfile(created) }, 201)
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -996,8 +1040,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toRoleProfile(updated!) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -1007,8 +1050,7 @@ export class ApiServer {
         return this.json<SkillContent>(res, { ok: true, data: this.skillManager.getContent(skillContentMatch[1]) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Skill not found'
-        return this.json(res, { ok: false, error: message }, 404)
+        return this.error(res, error, 'Skill not found', 404)
       }
     }
 
@@ -1033,8 +1075,7 @@ export class ApiServer {
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.update(skillMatch[1], payload) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -1047,8 +1088,7 @@ export class ApiServer {
         return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.remove(skillMatch[1]) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete skill'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Failed to delete skill')
       }
     }
 
@@ -1064,10 +1104,10 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toRoleProfile(existing) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete role'
+        const message = this.errorMessage(error, 'Failed to delete role')
         const status = message.includes('FOREIGN KEY constraint failed') ? 409 : 400
         const userMessage = status === 409 ? 'Role is still used by existing bots' : message
-        return this.json(res, { ok: false, error: userMessage }, status)
+        return this.json(res, { ok: false, error: userMessage }, this.errorStatus(error, status))
       }
     }
 
@@ -1124,8 +1164,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toBotProfile(updated) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid request body'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Invalid request body')
       }
     }
 
@@ -1142,8 +1181,7 @@ export class ApiServer {
         return this.json(res, { ok: true, data: this.toBotProfile(existing) })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to delete bot'
-        return this.json(res, { ok: false, error: message }, 400)
+        return this.error(res, error, 'Failed to delete bot')
       }
     }
 
@@ -1163,9 +1201,9 @@ export class ApiServer {
         return this.json(res, { ok: true, data: messages })
       }
       catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to load conversation messages'
+        const message = this.errorMessage(error, 'Failed to load conversation messages')
         const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, status)
+        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
       }
     }
 
