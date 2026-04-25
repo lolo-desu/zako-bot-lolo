@@ -42,7 +42,7 @@ Status: Completed
 Status: In progress
 
 - [x] Split OpenAI-compatible request/stream logic from `packages/core/src/llm/client.ts`.
-- [ ] Split Vertex request/stream logic into a provider module.
+- [x] Split Vertex request/stream logic into a provider module.
 - [ ] Extract common tool execution and approval result formatting.
 - [ ] Keep public `LLMClient` behavior unchanged.
 - [ ] Build `@zakobot/core`.

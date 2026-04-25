@@ -1,9 +1,9 @@
 import OpenAI from 'openai'
 import { GoogleGenAI } from '@google/genai'
-import type { Content, Part, Tool as GenAITool } from '@google/genai'
 import type { AgentEvent, LLMConfig, ChatMessage, LLMTool } from '@zakobot/shared'
 import type { LLMChatOptions, LLMRequestOptions, LLMStreamOptions, RateLimitRetryHandler } from './provider-types.js'
 import { chatOpenAI, chatStreamOpenAI } from './providers/openai.js'
+import { chatVertex, chatStreamVertex } from './providers/vertex.js'
 
 const MAX_TOOL_CALL_ROUNDS = 8
 const RATE_LIMIT_MESSAGE = 'LLM 服务当前过于繁忙，请稍等片刻后重试。'
@@ -37,11 +37,6 @@ function extractVertexLocation(baseUrl: string): string {
   const hostMatch = baseUrl.match(/^https?:\/\/([a-z0-9-]+)-aiplatform\.googleapis\.com/)
   if (hostMatch) return hostMatch[1]!
   return 'us-central1'
-}
-
-let _callCounter = 0
-function genCallId(): string {
-  return `call_${(++_callCounter).toString(36)}_${Math.random().toString(36).slice(2, 6)}`
 }
 
 export class LLMClient {
@@ -79,7 +74,7 @@ export class LLMClient {
     options: LLMChatOptions = {},
   ): Promise<string> {
     if (this.genai) {
-      return this.chatVertex(messages, tools, maxToolCallRounds, options)
+      return chatVertex(this.getVertexProviderDeps(), messages, tools, maxToolCallRounds, options)
     }
 
     return chatOpenAI(this.getOpenAIProviderDeps(), messages, tools, maxToolCallRounds, options, TOOL_LIMIT_FINAL_INSTRUCTION)
@@ -91,7 +86,10 @@ export class LLMClient {
     options: LLMStreamOptions = {},
   ): AsyncGenerator<AgentEvent> {
     if (this.genai) {
-      yield* this.chatStreamVertex(messages, tools, options)
+      yield* chatStreamVertex(this.getVertexProviderDeps(), messages, tools, {
+        ...options,
+        maxToolCallRounds: options.maxToolCallRounds ?? MAX_TOOL_CALL_ROUNDS,
+      })
       return
     }
 
@@ -114,225 +112,17 @@ export class LLMClient {
     }
   }
 
-  // ── Vertex AI (Google GenAI SDK) ──────────────────────────────────────────
-
-  private async chatVertex(messages: ChatMessage[], tools: LLMTool[], maxRounds: number, options: LLMChatOptions): Promise<string> {
-    const { systemInstruction, contents } = await this.toGenAIContents(messages)
-    const genAITools = this.buildGenAITools(tools)
-
-    for (let round = 0; round < maxRounds; round++) {
-      this.throwIfAborted(options.abortSignal)
-      const response = await this.requestWithRetry(() => this.genai!.models.generateContent({
-        model: this.config.model,
-        contents,
-        config: {
-          ...(systemInstruction ? { systemInstruction } : {}),
-          ...(genAITools.length ? { tools: genAITools } : {}),
-        },
-      }), options)
-
-      const parts: Part[] = response.candidates?.[0]?.content?.parts ?? []
-      const funcCalls = parts.filter(p => p.functionCall)
-      const text = parts.filter(p => p.text).map(p => p.text).join('')
-
-      if (!funcCalls.length) return text
-
-      contents.push({ role: 'model', parts })
-
-      const responseParts: Part[] = []
-      for (const part of funcCalls) {
-        const fc = part.functionCall!
-        const tool = tools.find(t => t.name === fc.name)
-        let result: string
-        try {
-          if (!tool) throw new Error(`Tool "${fc.name}" is not available`)
-          const args = (fc.args ?? {}) as Record<string, unknown>
-
-          if (options.requestApproval) {
-            const decision = await options.requestApproval(genCallId(), fc.name!, args)
-            if (!decision.approved) {
-              result = this.formatDeniedToolResult(decision)
-              responseParts.push({ functionResponse: { name: fc.name!, response: { result } } })
-              continue
-            }
-          }
-
-          console.log(`[ToolCall] ${fc.name} ${this.formatLogValue(args)}`)
-          result = await tool.execute(args)
-          console.log(`[ToolResult] ${fc.name} ok length=${result.length}`)
-        }
-        catch (err) {
-          result = `Error: ${err instanceof Error ? err.message : String(err)}`
-          console.warn(`[ToolResult] ${fc.name} error="${this.escapeLogMessage(result)}"`)
-        }
-        responseParts.push({ functionResponse: { name: fc.name!, response: { result } } })
-      }
-      contents.push({ role: 'user', parts: responseParts })
-    }
-
-    console.warn(`[LLM] Reached tool-call limit (${maxRounds}); requesting final answer without tools.`)
-    const final = await this.requestWithRetry(() => this.genai!.models.generateContent({
+  private getVertexProviderDeps() {
+    return {
+      client: this.genai!,
       model: this.config.model,
-      contents,
-      config: systemInstruction ? { systemInstruction } : {},
-    }), options)
-    return final.candidates?.[0]?.content?.parts?.filter(p => p.text).map(p => p.text).join('') ?? ''
-  }
-
-  private async *chatStreamVertex(
-    messages: ChatMessage[],
-    tools: LLMTool[],
-    options: LLMStreamOptions,
-  ): AsyncGenerator<AgentEvent> {
-    const {
-      maxToolCallRounds = MAX_TOOL_CALL_ROUNDS,
-      requestApproval,
-      abortSignal,
-      onRateLimitRetry,
-    } = options
-    const { systemInstruction, contents } = await this.toGenAIContents(messages)
-    const genAITools = this.buildGenAITools(tools)
-
-    for (let round = 0; round < maxToolCallRounds; round++) {
-      this.throwIfAborted(abortSignal)
-      const response = await this.requestWithRetry(() => this.genai!.models.generateContent({
-        model: this.config.model,
-        contents,
-        config: {
-          ...(systemInstruction ? { systemInstruction } : {}),
-          ...(genAITools.length ? { tools: genAITools } : {}),
-        },
-      }), { abortSignal, onRateLimitRetry })
-
-      const parts: Part[] = response.candidates?.[0]?.content?.parts ?? []
-      const funcCalls = parts.filter(p => p.functionCall)
-      const text = parts.filter(p => p.text).map(p => p.text).join('')
-
-      if (text) {
-        for (const segment of this.splitSegments(text)) {
-          yield { type: 'text_chunk', content: segment }
-        }
-      }
-
-      if (!funcCalls.length) {
-        yield { type: 'done', content: text }
-        return
-      }
-
-      contents.push({ role: 'model', parts })
-
-      const responseParts: Part[] = []
-      for (const part of funcCalls) {
-        const fc = part.functionCall!
-        const callId = genCallId()
-        const tool = tools.find(t => t.name === fc.name)
-        const args = (fc.args ?? {}) as Record<string, unknown>
-
-        yield { type: 'tool_call', callId, name: fc.name!, input: args }
-
-        let result: string
-        let ok = true
-
-        try {
-          if (!tool) throw new Error(`Tool "${fc.name}" is not available`)
-
-          if (requestApproval) {
-            const decision = await requestApproval(callId, fc.name!, args)
-            if (!decision.approved) {
-              result = decision.guidance?.trim()
-                ? `User denied this tool call. Guidance: ${decision.guidance.trim()}`
-                : decision.reason?.trim()
-                    ? `User denied this tool call. Reason: ${decision.reason.trim()}`
-                    : 'User denied this tool call.'
-              ok = false
-              yield { type: 'tool_result', callId, name: fc.name!, result, ok }
-              responseParts.push({ functionResponse: { name: fc.name!, response: { result } } })
-              continue
-            }
-          }
-
-          console.log(`[ToolCall] ${fc.name} ${this.formatLogValue(args)}`)
-          result = await tool.execute(args)
-          console.log(`[ToolResult] ${fc.name} ok length=${result.length}`)
-        }
-        catch (err) {
-          result = `Error: ${err instanceof Error ? err.message : String(err)}`
-          ok = false
-          console.warn(`[ToolResult] ${fc.name} error="${this.escapeLogMessage(result)}"`)
-        }
-
-        yield { type: 'tool_result', callId, name: fc.name!, result, ok }
-        responseParts.push({ functionResponse: { name: fc.name!, response: { result } } })
-      }
-
-      contents.push({ role: 'user', parts: responseParts })
+      escapeLogMessage: (value: string) => this.escapeLogMessage(value),
+      formatDeniedToolResult: (decision: { reason?: string, guidance?: string }) => this.formatDeniedToolResult(decision),
+      formatLogValue: (value: unknown) => this.formatLogValue(value),
+      requestWithRetry: <T>(operation: () => Promise<T>, options: LLMRequestOptions = {}) => this.requestWithRetry(operation, options),
+      splitSegments: (text: string, maxLength = 1800) => this.splitSegments(text, maxLength),
+      throwIfAborted: (signal?: AbortSignal) => this.throwIfAborted(signal),
     }
-
-    console.warn(`[LLM] Reached tool-call limit (${maxToolCallRounds}); requesting final answer without tools.`)
-    yield { type: 'tool_limit_reached', limit: maxToolCallRounds }
-    const final = await this.requestWithRetry(() => this.genai!.models.generateContent({
-      model: this.config.model,
-      contents,
-      config: systemInstruction ? { systemInstruction } : {},
-    }), { abortSignal, onRateLimitRetry })
-    const finalText = final.candidates?.[0]?.content?.parts?.filter(p => p.text).map(p => p.text).join('') ?? ''
-
-    if (finalText) {
-      for (const segment of this.splitSegments(finalText)) {
-        yield { type: 'text_chunk', content: segment }
-      }
-    }
-    yield { type: 'done', content: finalText }
-  }
-
-  private async toGenAIContents(messages: ChatMessage[]): Promise<{ systemInstruction: string; contents: Content[] }> {
-    const systemParts: string[] = []
-    const contents: Content[] = []
-
-    for (const msg of messages) {
-      if (msg.role === 'system') {
-        const text = typeof msg.content === 'string' ? msg.content : msg.content.map(p => p.type === 'text' ? p.text : '').join('')
-        systemParts.push(text)
-      }
-      else {
-        let parts: Part[]
-        if (typeof msg.content === 'string') {
-          parts = [{ text: msg.content }]
-        }
-        else {
-          parts = await Promise.all(msg.content.map(async (p): Promise<Part> => {
-            if (p.type === 'text') return { text: p.text }
-            const { data, mimeType } = await this.fetchImageAsInlineData(p.image_url.url)
-            return { inlineData: { data, mimeType } }
-          }))
-        }
-        contents.push({
-          role: msg.role === 'assistant' ? 'model' : 'user',
-          parts,
-        })
-      }
-    }
-
-    return { systemInstruction: systemParts.join('\n\n'), contents }
-  }
-
-  private async fetchImageAsInlineData(url: string): Promise<{ data: string; mimeType: string }> {
-    const response = await fetch(url)
-    const buffer = await response.arrayBuffer()
-    const data = Buffer.from(buffer).toString('base64')
-    const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() ?? 'image/jpeg'
-    return { data, mimeType }
-  }
-
-  private buildGenAITools(tools: LLMTool[]): GenAITool[] {
-    if (!tools.length) return []
-    return [{
-      functionDeclarations: tools.map(t => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters as Record<string, unknown>,
-      })),
-    }]
   }
 
   // ── OpenAI helpers ────────────────────────────────────────────────────────
