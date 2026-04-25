@@ -1,4 +1,5 @@
 import {
+  deleteLocalMemory,
   listLocalMemories,
   touchLocalMemories,
   upsertLocalMemory,
@@ -31,6 +32,14 @@ export class LocalMemoryService {
 
   isEnabled() {
     return this.getSettings().enabled
+  }
+
+  listMemories(input: MemoryScope) {
+    if (!this.isEnabled()) {
+      return []
+    }
+
+    return listLocalMemories(this.db, input, 100)
   }
 
   shouldWriteback() {
@@ -98,6 +107,32 @@ export class LocalMemoryService {
         sourceTopicId: input.topicId,
       })
     }
+  }
+
+  saveMemory(input: MemoryScope & { topicId: string; memory: string; kind: string }) {
+    const memory = this.normalizeMemory(input.memory)
+    if (!memory) {
+      throw new Error('Memory must be 4-200 characters')
+    }
+
+    upsertLocalMemory(this.db, {
+      botInstanceId: input.botInstanceId,
+      platform: input.platform,
+      userId: input.userId,
+      memory,
+      kind: this.normalizeKind(input.kind),
+      sourceTopicId: input.topicId,
+    })
+  }
+
+  deleteMemory(input: MemoryScope & { id: string }) {
+    const id = input.id.trim()
+    if (!id) {
+      throw new Error('Memory id is required')
+    }
+
+    const result = deleteLocalMemory(this.db, input, id)
+    return result.changes > 0
   }
 
   private scoreMemory(

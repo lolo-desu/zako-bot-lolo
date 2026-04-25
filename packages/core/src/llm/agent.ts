@@ -7,6 +7,7 @@ import { buildToolPrompt } from './tool-prompt.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { LocalMemoryService } from '../memory/local-memory-service.js'
+import { createLocalMemoryTools } from '../memory/local-memory-tools.js'
 
 export class Agent {
   private client: LLMClient
@@ -117,7 +118,8 @@ export class Agent {
     const { systemPrompt, maxToolCallRounds, sendTime, timezone } = this.getGeneralSettings()
     const enabledTools = this.parseEnabledTools(role.enabledTools)
     const enabledSkills = this.parseEnabledSkills(role.enabledSkills)
-    const allowedTools = this.toolRegistry.listEnabled(enabledTools)
+    const scopedMemoryTools = this.buildScopedMemoryTools(topicId)
+    const allowedTools = [...this.toolRegistry.listEnabled(enabledTools), ...scopedMemoryTools]
     const skillPrompt = this.skillManager.buildPrompt(enabledSkills, this.getLatestUserText(history))
     const toolPrompt = buildToolPrompt(allowedTools)
     const historyWithTime = sendTime ? this.injectSendTime(history, timezone) : history
@@ -150,6 +152,25 @@ export class Agent {
       platform: latestUser.platform,
       userId: latestUser.senderId.trim(),
       query,
+    })
+  }
+
+  private buildScopedMemoryTools(topicId: string) {
+    if (!this.localMemoryService.isEnabled()) {
+      return []
+    }
+
+    const latestUser = this.findLatestUserMessage(this.conversations.listTopicMessages(topicId))
+    const userId = latestUser?.senderId.trim()
+    if (!latestUser || !userId) {
+      return []
+    }
+
+    return createLocalMemoryTools(this.localMemoryService, {
+      botInstanceId: this.botInstanceId,
+      platform: latestUser.platform,
+      userId,
+      topicId,
     })
   }
 

@@ -71,3 +71,15 @@ export function touchLocalMemories(db: DB, ids: string[], now = new Date()) {
     .where(inArray(localMemories.id, ids))
     .run()
 }
+
+export function deleteLocalMemory(db: DB, scope: LocalMemoryScope, id: string) {
+  return db
+    .delete(localMemories)
+    .where(and(
+      eq(localMemories.id, id),
+      eq(localMemories.botInstanceId, scope.botInstanceId),
+      eq(localMemories.platform, scope.platform),
+      eq(localMemories.userId, scope.userId),
+    ))
+    .run()
+}
