@@ -92,10 +92,10 @@ Status: Completed
 
 ## Phase 8: Cleanup And Runtime Hygiene
 
-Status: Pending
+Status: Completed
 
-- [ ] Remove manual test artifacts from the runtime workspace when safe.
-- [ ] Review service restart/build workflow documentation.
-- [ ] Review logs for noisy or missing operational events.
-- [ ] Full `pnpm build`.
-- [ ] Commit and deploy.
+- [x] Remove manual test artifacts from the runtime workspace when safe.
+- [x] Review service restart/build workflow documentation.
+- [x] Review logs for noisy or missing operational events.
+- [x] Full `pnpm build`.
+- [x] Commit and deploy.

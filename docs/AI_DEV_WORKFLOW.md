@@ -13,7 +13,7 @@
 - 当前 SQLite 数据库：`/root/.zakobot/data.db`
 - 当前 core 状态接口：`http://127.0.0.1:6325/status`
 - 当前 core 文件日志：`/root/.zakobot/logs/core.log`
-- 当前常用服务管理：`systemctl status|restart zako-bot.service`
+- 当前常用服务管理：`systemctl restart zako-bot.service`、`systemctl is-active zako-bot.service`
 
 ## 2. 项目结构
 
@@ -164,8 +164,10 @@ curl -fsS "http://127.0.0.1:6325/status"
 
 ```bash
 journalctl -u zako-bot.service -n 100 --no-pager
-Read /root/.zakobot/logs/core.log
 ```
+
+- 如需看文件日志，用 `read /root/.zakobot/logs/core.log`。
+- 服务重启后不要立刻判定失败；通常等 5 到 8 秒再看 `status` 和启动日志更稳。
 
 ## 9. 当前运行验证习惯
 
@@ -174,10 +176,11 @@ Read /root/.zakobot/logs/core.log
 - `core` build 通过
 - `panel` build 通过（如果改过 panel）
 - `curl http://127.0.0.1:6325/status` 返回 `ok: true`
-- `/tmp/zakobot-core.log` 里看到：
-  - `ApiServer Listening`
-  - `McpManager Connected`
+- `journalctl -u zako-bot.service -n 100 --no-pager` 或 `/root/.zakobot/logs/core.log` 里看到：
+  - `ApiServer` 监听成功
+  - `McpManager` 连接成功
   - Discord bot 登录成功
+  - `BotManager` 显示目标 bot 数量已上线
 - 如果改了 Discord 行为：
   - 看目标 bot 是否只在允许频道/子区响应
   - 看目标 bot 是否只对允许用户响应
@@ -185,6 +188,11 @@ Read /root/.zakobot/logs/core.log
 - 如果改了 noVNC / 浏览器：
   - 看 `manual_login` 是否能起 headed browser
   - 看 noVNC 地址是否可达
+
+### 当前日志解读补充
+
+- `PluginLoader No plugins directory found, skipping.` 在未配置插件目录时是正常启动信息，不算异常。
+- `/new`、`/stop`、`/browser`、`/model` 的注册日志会按 bot 各输出一次；当前有两个 Discord bot，所以启动时看到两条是正常现象。
 
 ## 10. 常见联动点
 
