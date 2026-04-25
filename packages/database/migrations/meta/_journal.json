@@ -64,6 +64,13 @@
       "when": 1777000000000,
       "tag": "0008_even_lolover",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1777102000000,
+      "tag": "0009_gentle_local_memory",
+      "breakpoints": true
     }
   ]
 }

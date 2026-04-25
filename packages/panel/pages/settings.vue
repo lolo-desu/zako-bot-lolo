@@ -49,6 +49,13 @@ const settingItems = [
     match: '/settings/models',
   },
   {
+    label: '记忆设置',
+    icon: 'i-heroicons-circle-stack-20-solid',
+    value: 'memory',
+    to: '/settings/memory',
+    match: '/settings/memory',
+  },
+  {
     label: '搜索设置',
     icon: 'i-heroicons-magnifying-glass-20-solid',
     value: 'search',

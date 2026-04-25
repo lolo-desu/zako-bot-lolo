@@ -7,25 +7,29 @@ import type {
   RoleRow,
 } from '@zakobot/database'
 import { getEnabledBots, getBotWithRole, getRole, updateBot } from '@zakobot/database'
-import type { GeneralSettings } from '@zakobot/shared'
+import type { GeneralSettings, LocalMemorySettings } from '@zakobot/shared'
 import { DiscordAdapter } from './discord-adapter.js'
 import { Agent } from '../llm/agent.js'
 import { ConversationService } from '../llm/conversation-service.js'
 import { fetchAvailableModels } from '../llm/list-models.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
+import { LocalMemoryService } from '../memory/local-memory-service.js'
 
 export class BotManager {
   private adapters = new Map<string, DiscordAdapter>()
   private conversations: ConversationService
+  private localMemoryService: LocalMemoryService
 
   constructor(
     private db: DB,
     private toolRegistry: ToolRegistry,
     private skillManager: SkillManager,
     private getGeneralSettings: () => GeneralSettings,
+    getLocalMemorySettings: () => LocalMemorySettings,
   ) {
     this.conversations = new ConversationService(db)
+    this.localMemoryService = new LocalMemoryService(db, getLocalMemorySettings)
   }
 
   async startAll() {
@@ -136,6 +140,7 @@ export class BotManager {
     const userMessage = this.conversations.appendMessage(row.instance, topic.id, scope, {
       role: 'user',
       content: resolvedContent,
+      senderId: 'panel',
       senderName: '控制台',
       metadata: {
         origin: 'panel',
@@ -154,6 +159,8 @@ export class BotManager {
         origin: 'panel',
       },
     })!
+
+    void agent.rememberTopicTurn(topic.id)
 
     return {
       topic: this.conversations.getTopic(topic.id)!,
@@ -260,6 +267,7 @@ export class BotManager {
     const roleId = row.role.id
     const fallbackRole = row.role
     return new Agent(
+      row.instance.id,
       () => getRole(this.db, roleId) ?? fallbackRole,
       {
         provider: row.instance.llmProvider as 'openai',
@@ -270,6 +278,7 @@ export class BotManager {
       this.conversations,
       this.toolRegistry,
       this.skillManager,
+      this.localMemoryService,
       this.getGeneralSettings,
     )
   }

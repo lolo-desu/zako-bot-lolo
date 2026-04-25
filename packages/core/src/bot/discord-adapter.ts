@@ -435,6 +435,19 @@ export class DiscordAdapter {
       }
     }
 
+    const toolDisplayIds = new Map<string, string>()
+    let toolDisplayCounter = 0
+
+    const assignToolDisplayId = (callId: string) => {
+      const displayId = `tool_${++toolDisplayCounter}`
+      toolDisplayIds.set(callId, displayId)
+      return displayId
+    }
+
+    const getToolDisplayId = (callId: string) => {
+      return toolDisplayIds.get(callId) ?? assignToolDisplayId(callId)
+    }
+
     let requestApproval: ToolApprovalCallback | undefined
 
     requestApproval = async (callId, name, input) => {
@@ -446,13 +459,13 @@ export class DiscordAdapter {
 
       const fingerprint = this.buildApprovalFingerprint(name, input)
       if (this.hasRememberedApproval(topicId, fingerprint)) {
-        await setToolLog(this.createToolProgressEntry(callId, name, input, '已自动通过', '已按“始终”规则自动放行'))
+        await setToolLog(this.createToolProgressEntry(getToolDisplayId(callId), name, input, '已自动通过', '已按“始终”规则自动放行'))
         return { approved: true }
       }
 
       const summary = this.buildToolActionSummary(name, input)
       toolCallSummaries.set(callId, summary)
-      const entry = this.buildApprovalEntry(callId, name, input, summary)
+      const entry = this.buildApprovalEntry(getToolDisplayId(callId), name, input, summary)
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
@@ -489,7 +502,7 @@ export class DiscordAdapter {
           abortSignal?.removeEventListener('abort', onAbort)
           this.pendingApprovals.delete(callId)
           pendingApprovalMessage = undefined
-          await setToolLog(this.buildFinishedToolEntry(callId, name, input, summary, decision, logLine))
+          await setToolLog(this.buildFinishedToolEntry(getToolDisplayId(callId), name, input, summary, decision, logLine))
           resolve(decision)
         }
 
@@ -501,7 +514,7 @@ export class DiscordAdapter {
           clearTimeout(timer)
           this.pendingApprovals.delete(callId)
           pendingApprovalMessage = undefined
-          void setToolLog(this.createToolProgressEntry(callId, name, input, '已停止', '工具授权已停止'))
+          void setToolLog(this.createToolProgressEntry(getToolDisplayId(callId), name, input, '已停止', '工具授权已停止'))
           reject(new Error(REQUEST_STOPPED_MESSAGE))
         }
 
@@ -561,8 +574,8 @@ export class DiscordAdapter {
       })
     }
 
-    let fullContent = ''
     const toolCallSummaries = new Map<string, string>()
+    let fullContent = ''
 
     for await (const event of this.agent.respondStream(topicId, {
       requestApproval,
@@ -584,6 +597,7 @@ export class DiscordAdapter {
           break
         case 'tool_call': {
           if (toolProcessMode === 'none') break
+          const displayId = assignToolDisplayId(event.callId)
           const summary = this.buildToolActionSummary(event.name, event.input)
           toolCallSummaries.set(event.callId, summary)
           // Only send a brief notification when no approval dialog will cover it
@@ -591,15 +605,16 @@ export class DiscordAdapter {
             && !this.hasRememberedApproval(topicId, this.buildApprovalFingerprint(event.name, event.input))
           if (!approvalWillShow) {
             this.throwIfStopped(abortSignal)
-            await setToolLog(this.formatToolCall(event.callId, event.name, event.input, summary))
+            await setToolLog(this.formatToolCall(displayId, event.name, event.input, summary))
           }
           break
         }
         case 'tool_result':
           if (toolProcessMode === 'full') {
             this.throwIfStopped(abortSignal)
-            await setToolLog(this.formatToolResult(event, toolCallSummaries.get(event.callId)))
+            await setToolLog(this.formatToolResult({ ...event, callId: getToolDisplayId(event.callId) }, toolCallSummaries.get(event.callId)))
             toolCallSummaries.delete(event.callId)
+            toolDisplayIds.delete(event.callId)
           }
           break
         case 'tool_limit_reached':
@@ -676,22 +691,22 @@ export class DiscordAdapter {
 
   private renderProgressCurrent(entry: ProgressEntry) {
     if (entry.kind === 'notice') {
-      return ['**当前状态**', `> ℹ️ ${entry.content}`].join('\n')
+      return ['**当前状态**', `ℹ️ ${entry.content}`].join('\n')
     }
 
     const badge = this.formatStatusBadge(entry.status)
     const lines = [
       '**当前操作**',
-      `> 状态：${badge}`,
-      `> 操作：${entry.summary}`,
+      `状态：${badge}`,
+      `操作：${entry.summary}`,
     ]
 
     if (entry.command) {
-      lines.push(`> 命令：${this.inlineCode(this.truncateValue(entry.command, 120))}`)
+      lines.push(`命令：${this.inlineCode(this.truncateValue(entry.command, 120))}`)
     }
 
     if (entry.note) {
-      lines.push(`> 说明：${this.truncateValue(entry.note, 140)}`)
+      lines.push(`说明：${this.truncateValue(entry.note, 140)}`)
     }
 
     return lines.join('\n')
@@ -1561,6 +1576,7 @@ export class DiscordAdapter {
       senderId: this.client.user?.id ?? '',
       senderName: this.client.user?.username ?? this.instance.name,
     })
+    void this.agent.rememberTopicTurn(topicId)
   }
 
   private async withTypingIndicator<T>(

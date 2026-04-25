@@ -6,16 +6,19 @@ import type { RespondStreamOptions } from './respond-stream-options.js'
 import { buildToolPrompt } from './tool-prompt.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
+import { LocalMemoryService } from '../memory/local-memory-service.js'
 
 export class Agent {
   private client: LLMClient
 
   constructor(
+    private botInstanceId: string,
     private getRole: () => RoleRow,
     llmConfig: LLMConfig,
     private conversations: ConversationService,
     private toolRegistry: ToolRegistry,
     private skillManager: SkillManager,
+    private localMemoryService: LocalMemoryService,
     private getGeneralSettings: () => GeneralSettings,
   ) {
     this.client = new LLMClient(llmConfig)
@@ -25,7 +28,7 @@ export class Agent {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
     const { requestApproval, abortSignal, onRateLimitRetry } = options
-    const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(role, history)
+    const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(topicId, role, history)
 
     yield* this.client.chatStream(messages, allowedTools, {
       maxToolCallRounds,
@@ -38,7 +41,7 @@ export class Agent {
   async respond(topicId: string): Promise<string> {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
-    const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(role, history)
+    const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(topicId, role, history)
 
     const reply = await this.client.chat(messages, allowedTools, maxToolCallRounds)
     return reply
@@ -66,7 +69,7 @@ export class Agent {
   async explainToolIntent(topicId: string, name: string, input: unknown, question?: string): Promise<string> {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
-    const { messages } = this.buildConversationRequest(role, history)
+    const { messages } = this.buildConversationRequest(topicId, role, history)
     const args = this.safeJsonStringify(input)
     const reviewerQuestion = question?.trim() || '为什么现在需要执行这个操作？'
 
@@ -83,7 +86,34 @@ export class Agent {
     ], [], 1)
   }
 
-  private buildConversationRequest(role: RoleRow, history: ChatMessage[]) {
+  async rememberTopicTurn(topicId: string): Promise<void> {
+    if (!this.localMemoryService.shouldWriteback()) {
+      return
+    }
+
+    const rows = this.conversations.listTopicMessages(topicId)
+    const assistant = rows.at(-1)
+    const user = this.findLatestUserMessage(rows.slice(0, -1))
+
+    if (!assistant || assistant.role !== 'assistant' || !user?.senderId.trim()) {
+      return
+    }
+
+    const items = await this.extractLongTermMemories(user.content, assistant.content)
+    if (items.length === 0) {
+      return
+    }
+
+    this.localMemoryService.saveMemories({
+      botInstanceId: this.botInstanceId,
+      platform: user.platform,
+      userId: user.senderId.trim(),
+      topicId,
+      items,
+    })
+  }
+
+  private buildConversationRequest(topicId: string, role: RoleRow, history: ChatMessage[]) {
     const { systemPrompt, maxToolCallRounds, sendTime, timezone } = this.getGeneralSettings()
     const enabledTools = this.parseEnabledTools(role.enabledTools)
     const enabledSkills = this.parseEnabledSkills(role.enabledSkills)
@@ -91,6 +121,7 @@ export class Agent {
     const skillPrompt = this.skillManager.buildPrompt(enabledSkills, this.getLatestUserText(history))
     const toolPrompt = buildToolPrompt(allowedTools)
     const historyWithTime = sendTime ? this.injectSendTime(history, timezone) : history
+    const memoryPrompt = this.buildMemoryPrompt(topicId, history)
 
     return {
       maxToolCallRounds,
@@ -98,11 +129,123 @@ export class Agent {
       messages: [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'system' as const, content: role.systemPrompt },
+        ...(memoryPrompt ? [{ role: 'system' as const, content: memoryPrompt }] : []),
         ...(skillPrompt ? [{ role: 'system' as const, content: skillPrompt }] : []),
         ...(toolPrompt ? [{ role: 'system' as const, content: toolPrompt }] : []),
         ...historyWithTime,
       ],
     }
+  }
+
+  private buildMemoryPrompt(topicId: string, history: ChatMessage[]) {
+    const latestUser = this.findLatestUserMessage(this.conversations.listTopicMessages(topicId))
+    const query = this.getLatestUserText(history).trim()
+
+    if (!latestUser?.senderId.trim() || !query) {
+      return ''
+    }
+
+    return this.localMemoryService.buildPromptBlock({
+      botInstanceId: this.botInstanceId,
+      platform: latestUser.platform,
+      userId: latestUser.senderId.trim(),
+      query,
+    })
+  }
+
+  private async extractLongTermMemories(userContent: string, assistantContent: string) {
+    const trimmedUser = this.truncate(userContent.replace(/\s+/g, ' ').trim(), 1500)
+    const trimmedAssistant = this.truncate(assistantContent.replace(/\s+/g, ' ').trim(), 1500)
+
+    if (!trimmedUser || !trimmedAssistant) {
+      return []
+    }
+
+    try {
+      const response = await this.client.chat([
+        {
+          role: 'system',
+          content: '你是长期记忆提炼器。请从这轮对话中只提炼对未来互动稳定有帮助的信息，并返回严格 JSON 数组。每项格式为 {"memory": string, "kind": "preference"|"constraint"|"profile"|"project"|"fact"}。最多返回 3 项。不要输出 markdown，不要解释。不要记录一次性任务、短期状态、敏感信息、密码、token、密钥、验证码，或明显会过期的信息。',
+        },
+        {
+          role: 'user',
+          content: `用户消息：${trimmedUser}\n助手回复：${trimmedAssistant}`,
+        },
+      ], [], 1)
+
+      return this.parseExtractedMemories(response)
+    }
+    catch (error) {
+      console.warn('[Memory] Failed to extract local memories:', error)
+      return []
+    }
+  }
+
+  private parseExtractedMemories(value: string) {
+    const jsonText = this.extractJsonArray(value)
+    if (!jsonText) {
+      return [] as Array<{ memory: string; kind: string }>
+    }
+
+    try {
+      const parsed = JSON.parse(jsonText) as Array<{ memory?: unknown; kind?: unknown }>
+      if (!Array.isArray(parsed)) {
+        return []
+      }
+
+      return parsed
+        .map(item => ({
+          memory: typeof item.memory === 'string' ? item.memory.trim() : '',
+          kind: typeof item.kind === 'string' ? item.kind.trim() : 'fact',
+        }))
+        .filter(item => item.memory)
+        .slice(0, 3)
+    }
+    catch {
+      return []
+    }
+  }
+
+  private extractJsonArray(value: string) {
+    const trimmed = value.trim()
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      return trimmed
+    }
+
+    const blockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
+    if (blockMatch?.[1]) {
+      const block = blockMatch[1].trim()
+      if (block.startsWith('[') && block.endsWith(']')) {
+        return block
+      }
+    }
+
+    const start = trimmed.indexOf('[')
+    const end = trimmed.lastIndexOf(']')
+    if (start !== -1 && end > start) {
+      return trimmed.slice(start, end + 1)
+    }
+
+    return ''
+  }
+
+  private findLatestUserMessage<T extends { role: string }>(messages: T[]) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index]
+      if (message?.role === 'user') {
+        return message
+      }
+    }
+
+    return undefined
+  }
+
+  private truncate(value: string, maxChars: number) {
+    if (value.length <= maxChars) {
+      return value
+    }
+
+    return `${value.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
   }
 
   private injectSendTime(history: ChatMessage[], timezone: string): ChatMessage[] {
