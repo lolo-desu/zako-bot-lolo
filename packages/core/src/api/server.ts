@@ -17,12 +17,13 @@ import {
   updateMcpServer,
   updateRole,
 } from '@zakobot/database'
-import type { DB, McpServerRow, RoleRow } from '@zakobot/database'
+import type { DB, McpServerRow } from '@zakobot/database'
 import type { BotManager } from '../bot/bot-manager.js'
 import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
+import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile, toRoleProfile } from './serializers.js'
 import { getSearchSettings, normalizeSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
 import { getBrowseSettings, normalizeBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
 import { getGeneralSettings, normalizeGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
@@ -30,20 +31,13 @@ import { getLocalMemorySettings, normalizeLocalMemorySettings, saveLocalMemorySe
 import type {
   ApiResponse,
   BotEditorInput,
-  BotListItem,
-  BotProfile,
-  ConversationMessage,
-  ConversationTopic,
   CreateConversationTopicInput,
   RoleEditorInput,
-  RoleProfile,
   BrowseSettings,
   GeneralSettings,
   LocalMemorySettings,
   McpServerEditorInput,
-  McpServerProfile,
   McpServerStatus,
-  McpTransport,
   SearchSettings,
   SendConversationMessageInput,
   SendConversationMessageResult,
@@ -180,110 +174,6 @@ export class ApiServer {
 
   private error(res: http.ServerResponse, error: unknown, fallback: string, status = 400) {
     return writeApiError(res, error, fallback, status)
-  }
-
-  private toRoleProfile(row: RoleRow): RoleProfile {
-    return {
-      id: row.id,
-      avatar: row.avatar,
-      name: row.name,
-      systemPrompt: row.systemPrompt,
-      enabledTools: this.parseEnabledTools(row.enabledTools),
-      enabledSkills: this.parseEnabledSkills(row.enabledSkills),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }
-  }
-
-  private toBotProfile(row: NonNullable<ReturnType<typeof getBotWithRole>>): BotProfile {
-    return {
-      id: row.instance.id,
-      name: row.instance.name,
-      platform: row.instance.platform,
-      token: row.instance.token,
-      roleId: row.instance.roleId,
-      roleName: row.role.name,
-      roleAvatar: row.role.avatar,
-      llmProvider: row.instance.llmProvider as 'openai',
-      llmPlatformName: row.instance.llmPlatformName,
-      llmModel: row.instance.llmModel,
-      llmApiKey: row.instance.llmApiKey,
-      llmBaseUrl: row.instance.llmBaseUrl,
-      discordUserId: row.instance.discordUserId,
-      discordChannelId: row.instance.discordChannelId,
-      discordGuildId: row.instance.discordGuildId,
-      enabled: row.instance.enabled,
-      createdAt: row.instance.createdAt.toISOString(),
-      updatedAt: row.instance.updatedAt.toISOString(),
-    }
-  }
-
-  private toBotListItem(row: NonNullable<ReturnType<typeof getBotWithRole>>): BotListItem {
-    return {
-      id: row.instance.id,
-      name: row.instance.name,
-      platform: row.instance.platform,
-      roleId: row.instance.roleId,
-      roleName: row.role.name,
-      roleAvatar: row.role.avatar,
-      llmPlatformName: row.instance.llmPlatformName,
-      llmModel: row.instance.llmModel,
-      discordUserId: row.instance.discordUserId,
-      discordChannelId: row.instance.discordChannelId,
-      discordGuildId: row.instance.discordGuildId,
-      enabled: row.instance.enabled,
-      createdAt: row.instance.createdAt.toISOString(),
-      updatedAt: row.instance.updatedAt.toISOString(),
-    }
-  }
-
-  private toConversationTopic(row: ReturnType<BotManager['listConversationTopics']>[number]): ConversationTopic {
-    return {
-      id: row.id,
-      botInstanceId: row.botInstanceId,
-      platform: row.platform,
-      scopeKey: row.scopeKey,
-      name: row.name,
-      status: row.status,
-      sourceType: row.sourceType,
-      sourceId: row.sourceId,
-      metadata: this.parseJsonRecord(row.metadata),
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }
-  }
-
-  private toConversationMessage(row: ReturnType<BotManager['listConversationMessages']>[number]): ConversationMessage {
-    return {
-      id: row.id,
-      topicId: row.topicId,
-      botInstanceId: row.botInstanceId,
-      platform: row.platform,
-      role: row.role as 'user' | 'assistant',
-      content: row.content,
-      messageType: row.messageType,
-      platformMessageId: row.platformMessageId,
-      senderId: row.senderId,
-      senderName: row.senderName,
-      metadata: this.parseJsonRecord(row.metadata),
-      createdAt: row.createdAt.toISOString(),
-    }
-  }
-
-  private toMcpServerProfile(row: McpServerRow): McpServerProfile {
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      transport: row.transport as McpTransport,
-      command: row.command,
-      args: this.parseJsonStringArray(row.args),
-      env: this.parseJsonStringRecord(row.env),
-      url: row.url,
-      enabled: row.enabled,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    }
   }
 
   private parseRoleInput(body: Partial<RoleEditorInput>) {
@@ -481,37 +371,6 @@ export class ApiServer {
     return normalizeLocalMemorySettings(body as Record<string, unknown>)
   }
 
-  private parseJsonRecord(value: string): Record<string, unknown> {
-    try {
-      const parsed = JSON.parse(value) as Record<string, unknown>
-      return parsed && typeof parsed === 'object' ? parsed : {}
-    }
-    catch {
-      return {}
-    }
-  }
-
-  private parseJsonStringArray(value: string): string[] {
-    try {
-      const parsed = JSON.parse(value) as unknown
-      return Array.isArray(parsed)
-        ? parsed.filter((item): item is string => typeof item === 'string')
-        : []
-    }
-    catch {
-      return []
-    }
-  }
-
-  private parseJsonStringRecord(value: string): Record<string, string> {
-    try {
-      return this.normalizeStringRecord(JSON.parse(value) as unknown)
-    }
-    catch {
-      return {}
-    }
-  }
-
   private normalizeStringRecord(value: unknown): Record<string, string> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       return {}
@@ -520,15 +379,6 @@ export class ApiServer {
     return Object.fromEntries(
       Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
     )
-  }
-
-  private parseEnabledTools(value: string): string[] {
-    try {
-      return this.normalizeEnabledTools(JSON.parse(value) as unknown)
-    }
-    catch {
-      return []
-    }
   }
 
   private normalizeEnabledTools(value: unknown): string[] {
@@ -553,15 +403,6 @@ export class ApiServer {
     }
 
     return result
-  }
-
-  private parseEnabledSkills(value: string): string[] {
-    try {
-      return this.normalizeEnabledSkills(JSON.parse(value) as unknown)
-    }
-    catch {
-      return []
-    }
   }
 
   private normalizeEnabledSkills(value: unknown): string[] {
@@ -657,7 +498,7 @@ export class ApiServer {
     if (pathname === '/mcp/servers' && req.method === 'GET') {
       return this.json(res, {
         ok: true,
-        data: listMcpServers(this.db).map(row => this.toMcpServerProfile(row)),
+        data: listMcpServers(this.db).map(row => toMcpServerProfile(row)),
       })
     }
 
@@ -672,7 +513,7 @@ export class ApiServer {
           })
         }
 
-        return this.json(res, { ok: true, data: this.toMcpServerProfile(created) }, 201)
+        return this.json(res, { ok: true, data: toMcpServerProfile(created) }, 201)
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
@@ -745,7 +586,7 @@ export class ApiServer {
 
       try {
         await this.mcpManager.reconnect(server)
-        return this.json(res, { ok: true, data: this.toMcpServerProfile(server) })
+        return this.json(res, { ok: true, data: toMcpServerProfile(server) })
       }
       catch (error) {
         return this.error(res, error, 'Failed to reconnect MCP server')
@@ -760,7 +601,7 @@ export class ApiServer {
         return this.json(res, { ok: false, error: 'MCP server not found' }, 404)
       }
 
-      return this.json(res, { ok: true, data: this.toMcpServerProfile(server) })
+      return this.json(res, { ok: true, data: toMcpServerProfile(server) })
     }
 
     if (mcpServerMatch && req.method === 'PUT') {
@@ -787,7 +628,7 @@ export class ApiServer {
           await this.mcpManager.disconnect(updated.id)
         }
 
-        return this.json(res, { ok: true, data: this.toMcpServerProfile(updated) })
+        return this.json(res, { ok: true, data: toMcpServerProfile(updated) })
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
@@ -804,7 +645,7 @@ export class ApiServer {
       try {
         await this.mcpManager.disconnect(existing.id)
         deleteMcpServer(this.db, existing.id)
-        return this.json(res, { ok: true, data: this.toMcpServerProfile(existing) })
+        return this.json(res, { ok: true, data: toMcpServerProfile(existing) })
       }
       catch (error) {
         return this.error(res, error, 'Failed to delete MCP server')
@@ -812,7 +653,7 @@ export class ApiServer {
     }
 
     if (pathname === '/roles' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: listRoles(this.db).map(row => this.toRoleProfile(row)) })
+      return this.json(res, { ok: true, data: listRoles(this.db).map(row => toRoleProfile(row)) })
     }
 
     if (pathname === '/roles' && req.method === 'POST') {
@@ -834,7 +675,7 @@ export class ApiServer {
           updatedAt: now,
         })
 
-        return this.json(res, { ok: true, data: this.toRoleProfile(created!) }, 201)
+        return this.json(res, { ok: true, data: toRoleProfile(created!) }, 201)
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
@@ -844,7 +685,7 @@ export class ApiServer {
     if (pathname === '/bots' && req.method === 'GET') {
       return this.json(res, {
         ok: true,
-        data: listBotsWithRoles(this.db).map(row => this.toBotListItem(row)),
+        data: listBotsWithRoles(this.db).map(row => toBotListItem(row)),
       })
     }
 
@@ -858,7 +699,7 @@ export class ApiServer {
       try {
         const topics = this.botManager
           .listConversationTopics(botInstanceId)
-          .map(topic => this.toConversationTopic(topic))
+          .map(topic => toConversationTopic(topic))
 
         return this.json(res, { ok: true, data: topics })
       }
@@ -873,7 +714,7 @@ export class ApiServer {
       try {
         const payload = this.parseCreateConversationTopicInput(await this.readJson<CreateConversationTopicInput>(req))
         const topic = this.botManager.startPanelConversation(payload.botInstanceId)
-        return this.json(res, { ok: true, data: this.toConversationTopic(topic) }, 201)
+        return this.json(res, { ok: true, data: toConversationTopic(topic) }, 201)
       }
       catch (error) {
         const message = this.errorMessage(error, 'Failed to create conversation topic')
@@ -887,9 +728,9 @@ export class ApiServer {
         const payload = this.parseSendConversationMessageInput(await this.readJson<SendConversationMessageInput>(req))
         const result = await this.botManager.sendPanelMessage(payload.botInstanceId, payload.content, payload.topicId)
         const data: SendConversationMessageResult = {
-          topic: this.toConversationTopic(result.topic),
-          userMessage: this.toConversationMessage(result.userMessage),
-          assistantMessage: this.toConversationMessage(result.assistantMessage),
+          topic: toConversationTopic(result.topic),
+          userMessage: toConversationMessage(result.userMessage),
+          assistantMessage: toConversationMessage(result.assistantMessage),
         }
 
         return this.json(res, { ok: true, data })
@@ -911,7 +752,7 @@ export class ApiServer {
 
       try {
         const topic = await this.botManager.deleteConversationTopic(botInstanceId, conversationMatch[1])
-        return this.json(res, { ok: true, data: this.toConversationTopic(topic) })
+        return this.json(res, { ok: true, data: toConversationTopic(topic) })
       }
       catch (error) {
         const message = this.errorMessage(error, 'Failed to delete conversation topic')
@@ -956,7 +797,7 @@ export class ApiServer {
           console.error(`[ApiServer] Failed to sync bot "${created.instance.name}":`, error)
         })
 
-        return this.json(res, { ok: true, data: this.toBotProfile(created) }, 201)
+        return this.json(res, { ok: true, data: toBotProfile(created) }, 201)
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
@@ -971,7 +812,7 @@ export class ApiServer {
         return this.json(res, { ok: false, error: 'Role not found' }, 404)
       }
 
-      return this.json(res, { ok: true, data: this.toRoleProfile(role) })
+      return this.json(res, { ok: true, data: toRoleProfile(role) })
     }
 
     if (roleMatch && req.method === 'PUT') {
@@ -992,7 +833,7 @@ export class ApiServer {
           updatedAt: new Date(),
         })
 
-        return this.json(res, { ok: true, data: this.toRoleProfile(updated!) })
+        return this.json(res, { ok: true, data: toRoleProfile(updated!) })
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
@@ -1056,7 +897,7 @@ export class ApiServer {
 
       try {
         deleteRole(this.db, roleMatch[1])
-        return this.json(res, { ok: true, data: this.toRoleProfile(existing) })
+        return this.json(res, { ok: true, data: toRoleProfile(existing) })
       }
       catch (error) {
         const message = this.errorMessage(error, 'Failed to delete role')
@@ -1074,7 +915,7 @@ export class ApiServer {
         return this.json(res, { ok: false, error: 'Bot not found' }, 404)
       }
 
-      return this.json(res, { ok: true, data: this.toBotProfile(bot) })
+      return this.json(res, { ok: true, data: toBotProfile(bot) })
     }
 
     if (botMatch && req.method === 'PUT') {
@@ -1116,7 +957,7 @@ export class ApiServer {
           console.error(`[ApiServer] Failed to sync bot "${updated.instance.name}":`, error)
         })
 
-        return this.json(res, { ok: true, data: this.toBotProfile(updated) })
+        return this.json(res, { ok: true, data: toBotProfile(updated) })
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
@@ -1133,7 +974,7 @@ export class ApiServer {
       try {
         await this.botManager.stopOne(botMatch[1])
         deleteBot(this.db, botMatch[1])
-        return this.json(res, { ok: true, data: this.toBotProfile(existing) })
+        return this.json(res, { ok: true, data: toBotProfile(existing) })
       }
       catch (error) {
         return this.error(res, error, 'Failed to delete bot')
@@ -1151,7 +992,7 @@ export class ApiServer {
       try {
         const messages = this.botManager
           .listConversationMessages(botInstanceId, conversationMessagesMatch[1])
-          .map(message => this.toConversationMessage(message))
+          .map(message => toConversationMessage(message))
 
         return this.json(res, { ok: true, data: messages })
       }

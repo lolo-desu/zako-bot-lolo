@@ -21,10 +21,10 @@ Status: Completed
 
 ## Phase 2: Core API Routes
 
-Status: Pending
+Status: In progress
 
 - [ ] Extract route handlers by domain: status/plugins, settings, bots, roles, conversations, MCP, skills.
-- [ ] Extract serializers for bot, role, conversation, MCP profiles.
+- [x] Extract serializers for bot, role, conversation, MCP profiles.
 - [ ] Extract request validators/normalizers for editor payloads.
 - [ ] Keep `ApiServer` as a thin router/server coordinator.
 - [ ] Build `@zakobot/core`.
