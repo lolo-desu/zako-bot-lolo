@@ -24,6 +24,7 @@ import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
 import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile, toRoleProfile } from './serializers.js'
+import { getSystemRoute } from './routes/system.js'
 import {
   parseBotInput,
   parseBrowseSettingsInput,
@@ -204,21 +205,12 @@ export class ApiServer {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1')
     const { pathname, searchParams } = url
 
-    if (pathname === '/status' && req.method === 'GET') {
-      const { botsOnline, instances } = this.botManager.getStatus()
-      return this.json(res, {
-        ok: true,
-        data: {
-          uptime: process.uptime(),
-          botsOnline,
-          botsTotal: instances.length,
-          pluginsLoaded: this.pluginLoader.list().length,
-        },
-      })
-    }
-
-    if (pathname === '/plugins' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: this.pluginLoader.list() })
+    const systemRoute = getSystemRoute(pathname, req.method, {
+      botManager: this.botManager,
+      pluginLoader: this.pluginLoader,
+    })
+    if (systemRoute) {
+      return this.json(res, systemRoute.body, systemRoute.status)
     }
 
     if (pathname === '/skills' && req.method === 'GET') {
