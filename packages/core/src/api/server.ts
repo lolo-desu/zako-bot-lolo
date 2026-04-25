@@ -3,19 +3,15 @@ import { randomUUID } from 'crypto'
 import {
   createBot,
   createMcpServer,
-  createRole,
   deleteBot,
   deleteMcpServer,
-  deleteRole,
   getBotWithRole,
   getMcpServer,
   getRole,
   listBotsWithRoles,
   listMcpServers,
-  listRoles,
   updateBot,
   updateMcpServer,
-  updateRole,
 } from '@zakobot/database'
 import type { DB } from '@zakobot/database'
 import type { BotManager } from '../bot/bot-manager.js'
@@ -23,7 +19,8 @@ import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
-import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile, toRoleProfile } from './serializers.js'
+import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile } from './serializers.js'
+import { getRolesRoute } from './routes/roles.js'
 import { getSettingsRoute } from './routes/settings.js'
 import { getSkillsRoute } from './routes/skills.js'
 import { getSystemRoute } from './routes/system.js'
@@ -31,7 +28,6 @@ import {
   parseBotInput,
   parseCreateConversationTopicInput,
   parseMcpServerInput,
-  parseRoleInput,
   parseSendConversationMessageInput,
 } from './validators.js'
 import type {
@@ -316,34 +312,9 @@ export class ApiServer {
       }
     }
 
-    if (pathname === '/roles' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: listRoles(this.db).map(row => toRoleProfile(row)) })
-    }
-
-    if (pathname === '/roles' && req.method === 'POST') {
-      try {
-        const payload = parseRoleInput(await this.readJson(req))
-        const now = new Date()
-        const created = createRole(this.db, {
-          id: randomUUID(),
-          avatar: payload.avatar,
-          name: payload.name,
-          systemPrompt: payload.systemPrompt,
-          llmProvider: 'openai',
-          llmModel: '',
-          llmApiKey: '',
-          llmBaseUrl: null,
-          enabledTools: JSON.stringify(payload.enabledTools),
-          enabledSkills: JSON.stringify(payload.enabledSkills),
-          createdAt: now,
-          updatedAt: now,
-        })
-
-        return this.json(res, { ok: true, data: toRoleProfile(created!) }, 201)
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
+    const rolesRoute = await getRolesRoute(req, pathname, this.db)
+    if (rolesRoute) {
+      return this.json(res, rolesRoute.body, rolesRoute.status)
     }
 
     if (pathname === '/bots' && req.method === 'GET') {
@@ -465,61 +436,6 @@ export class ApiServer {
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    const roleMatch = pathname.match(/^\/roles\/([^/]+)$/)
-    if (roleMatch && req.method === 'GET') {
-      const role = getRole(this.db, roleMatch[1])
-
-      if (!role) {
-        return this.json(res, { ok: false, error: 'Role not found' }, 404)
-      }
-
-      return this.json(res, { ok: true, data: toRoleProfile(role) })
-    }
-
-    if (roleMatch && req.method === 'PUT') {
-      const existing = getRole(this.db, roleMatch[1])
-
-      if (!existing) {
-        return this.json(res, { ok: false, error: 'Role not found' }, 404)
-      }
-
-      try {
-        const payload = parseRoleInput(await this.readJson(req))
-        const updated = updateRole(this.db, roleMatch[1], {
-          avatar: payload.avatar,
-          name: payload.name,
-          systemPrompt: payload.systemPrompt,
-          enabledTools: JSON.stringify(payload.enabledTools),
-          enabledSkills: JSON.stringify(payload.enabledSkills),
-          updatedAt: new Date(),
-        })
-
-        return this.json(res, { ok: true, data: toRoleProfile(updated!) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (roleMatch && req.method === 'DELETE') {
-      const existing = getRole(this.db, roleMatch[1])
-
-      if (!existing) {
-        return this.json(res, { ok: false, error: 'Role not found' }, 404)
-      }
-
-      try {
-        deleteRole(this.db, roleMatch[1])
-        return this.json(res, { ok: true, data: toRoleProfile(existing) })
-      }
-      catch (error) {
-        const message = this.errorMessage(error, 'Failed to delete role')
-        const status = message.includes('FOREIGN KEY constraint failed') ? 409 : 400
-        const userMessage = status === 409 ? 'Role is still used by existing bots' : message
-        return this.json(res, { ok: false, error: userMessage }, this.errorStatus(error, status))
       }
     }
 
