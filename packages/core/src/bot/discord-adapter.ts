@@ -1561,6 +1561,7 @@ export class DiscordAdapter {
       senderId: this.client.user?.id ?? '',
       senderName: this.client.user?.username ?? this.instance.name,
     })
+    void this.agent.rememberTopicTurn(topicId)
   }
 
   private async withTypingIndicator<T>(

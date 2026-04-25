@@ -63,6 +63,13 @@ const settingItems = [
     match: '/settings/browse',
   },
   {
+    label: '记忆设置',
+    icon: 'i-heroicons-circle-stack-20-solid',
+    value: 'memory',
+    to: '/settings/memory',
+    match: '/settings/memory',
+  },
+  {
     label: 'MCP',
     icon: 'i-heroicons-server-stack-20-solid',
     value: 'mcp',

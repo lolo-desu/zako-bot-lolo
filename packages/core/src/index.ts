@@ -10,6 +10,7 @@ import { createDefaultToolRegistry } from './tools/index.js'
 import { getSearchSettings } from './settings/search-settings.js'
 import { getBrowseSettings } from './settings/browse-settings.js'
 import { getGeneralSettings } from './settings/general-settings.js'
+import { getMemorySettings } from './settings/memory-settings.js'
 import { ensureDirectory, getMcpWorkdir, getSkillsRoot, getZakobotHome, resolveZakobotPath } from './runtime/paths.js'
 import { initFileConsoleLogging } from './runtime/logger.js'
 
@@ -34,7 +35,7 @@ async function main() {
   )
   const mcpManager = new McpManager(toolRegistry, { stdioCwd: mcpWorkdir })
   const skillManager = new SkillManager(db, skillsRoot)
-  const botManager = new BotManager(db, toolRegistry, skillManager, () => getGeneralSettings(db))
+  const botManager = new BotManager(db, toolRegistry, skillManager, () => getGeneralSettings(db), () => getMemorySettings(db))
   const pluginLoader = new PluginLoader(botManager, toolRegistry)
   const apiServer = new ApiServer(db, botManager, pluginLoader, mcpManager, skillManager)
 

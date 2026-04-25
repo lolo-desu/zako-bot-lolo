@@ -25,6 +25,7 @@ import type { SkillManager } from '../skills/index.js'
 import { getSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
 import { getBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
 import { getGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
+import { getMemorySettings, saveMemorySettings } from '../settings/memory-settings.js'
 import type {
   ApiResponse,
   BotEditorInput,
@@ -37,6 +38,7 @@ import type {
   RoleProfile,
   BrowseSettings,
   GeneralSettings,
+  MemorySettings,
   McpServerEditorInput,
   McpServerProfile,
   McpServerStatus,
@@ -504,6 +506,25 @@ export class ApiServer {
     }
   }
 
+  private parseMemorySettingsInput(body: Partial<MemorySettings>): MemorySettings {
+    const topKRaw = typeof body.topK === 'number' ? body.topK : Number(body.topK)
+    const maxMemoriesRaw = typeof body.maxMemories === 'number' ? body.maxMemories : Number(body.maxMemories)
+    const maxPromptCharsRaw = typeof body.maxPromptChars === 'number' ? body.maxPromptChars : Number(body.maxPromptChars)
+    const timeoutMsRaw = typeof body.timeoutMs === 'number' ? body.timeoutMs : Number(body.timeoutMs)
+
+    return {
+      enabled: body.enabled === true,
+      provider: 'mem0',
+      apiKey: body.apiKey?.trim() ?? '',
+      baseUrl: body.baseUrl?.trim() ?? 'https://api.mem0.ai',
+      topK: Number.isFinite(topKRaw) ? Math.min(Math.max(Math.trunc(topKRaw), 1), 20) : 5,
+      maxMemories: Number.isFinite(maxMemoriesRaw) ? Math.min(Math.max(Math.trunc(maxMemoriesRaw), 1), 20) : 5,
+      maxPromptChars: Number.isFinite(maxPromptCharsRaw) ? Math.min(Math.max(Math.trunc(maxPromptCharsRaw), 100), 4000) : 600,
+      timeoutMs: Number.isFinite(timeoutMsRaw) ? Math.min(Math.max(Math.trunc(timeoutMsRaw), 1000), 30000) : 8000,
+      writebackEnabled: body.writebackEnabled !== false,
+    }
+  }
+
   private parseJsonRecord(value: string): Record<string, unknown> {
     try {
       const parsed = JSON.parse(value) as Record<string, unknown>
@@ -765,6 +786,21 @@ export class ApiServer {
       try {
         const payload = this.parseGeneralSettingsInput(await this.readJson<GeneralSettings>(req))
         return this.json(res, { ok: true, data: saveGeneralSettings(this.db, payload) })
+      }
+      catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid request body'
+        return this.json(res, { ok: false, error: message }, 400)
+      }
+    }
+
+    if (pathname === '/settings/memory' && req.method === 'GET') {
+      return this.json(res, { ok: true, data: getMemorySettings(this.db) })
+    }
+
+    if (pathname === '/settings/memory' && req.method === 'PUT') {
+      try {
+        const payload = this.parseMemorySettingsInput(await this.readJson<MemorySettings>(req))
+        return this.json(res, { ok: true, data: saveMemorySettings(this.db, payload) })
       }
       catch (error) {
         const message = error instanceof Error ? error.message : 'Invalid request body'
