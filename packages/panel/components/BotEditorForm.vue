@@ -167,6 +167,7 @@
 </template>
 
 <script setup lang="ts">
+import { getBotEditorInputError, normalizeBotEditorInput } from '@zakobot/shared'
 import type { BotEditorInput } from '@zakobot/shared'
 import { createEmptyBotEditorInput } from '~/composables/bot-editor'
 import { useModelPlatforms } from '~/composables/modelPlatforms'
@@ -209,6 +210,7 @@ const platformOptions: SelectOption[] = [
 ]
 
 const roleOptions = computed(() => props.roleOptions)
+const normalizedState = computed(() => normalizeBotEditorInput(state, { enabledDefault: true }))
 
 const modelOptions = computed<ModelOption[]>(() =>
   platforms.value
@@ -297,15 +299,7 @@ watch(selectedModelValue, (value) => {
 })
 
 const canSubmit = computed(() =>
-  state.name.trim().length > 0
-  && state.platform === 'discord'
-  && state.token.trim().length > 0
-  && state.roleId.trim().length > 0
-  && state.llmPlatformName.trim().length > 0
-  && state.llmModel.trim().length > 0
-  && state.llmApiKey.trim().length > 0
-  && state.llmBaseUrl.trim().length > 0
-   && state.discordGuildId.trim().length > 0,
+  getBotEditorInputError(normalizedState.value) === null,
 )
 
 function handleSubmit() {
@@ -313,21 +307,7 @@ function handleSubmit() {
     return
   }
 
-  emit('submit', {
-    name: state.name.trim(),
-    platform: 'discord',
-    token: state.token.trim(),
-    roleId: state.roleId.trim(),
-    llmProvider: 'openai',
-    llmPlatformName: state.llmPlatformName.trim(),
-    llmModel: state.llmModel.trim(),
-    llmApiKey: state.llmApiKey.trim(),
-    llmBaseUrl: state.llmBaseUrl.trim(),
-    discordUserId: state.discordUserId.trim(),
-    discordChannelId: state.discordChannelId.trim(),
-    discordGuildId: state.discordGuildId.trim(),
-    enabled: state.enabled,
-  })
+  emit('submit', normalizedState.value)
 }
 
 function resolveModelValue(platformName: string, model: string) {

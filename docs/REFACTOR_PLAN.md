@@ -83,11 +83,11 @@ Status: Completed
 
 ## Phase 7: Shared Runtime Contracts
 
-Status: Pending
+Status: In Progress
 
-- [ ] Centralize shared payload parsing/validation where core and panel currently duplicate assumptions.
+- [x] Centralize shared payload parsing/validation where core and panel currently duplicate assumptions.
 - [ ] Decide whether to introduce schema validation library only after duplication is visible from earlier phases.
-- [ ] Build `shared`, affected packages, and panel typecheck.
+- [x] Build `shared`, affected packages, and panel typecheck.
 - [ ] Commit and deploy.
 
 ## Phase 8: Cleanup And Runtime Hygiene

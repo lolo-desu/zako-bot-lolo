@@ -12,6 +12,7 @@ import type {
   SkillEditorInput,
   SkillImportInput,
 } from '@zakobot/shared'
+import { getBotEditorInputError, normalizeBotEditorInput } from '@zakobot/shared'
 import { normalizeBrowseSettings } from '../settings/browse-settings.js'
 import { normalizeGeneralSettings } from '../settings/general-settings.js'
 import { normalizeLocalMemorySettings } from '../settings/local-memory-settings.js'
@@ -73,44 +74,13 @@ export function parseSkillImportInput(body: Partial<SkillImportInput>): SkillImp
 }
 
 export function parseBotInput(body: Partial<BotEditorInput>) {
-  const name = body.name?.trim()
-  const token = body.token?.trim()
-  const roleId = body.roleId?.trim()
-  const llmPlatformName = body.llmPlatformName?.trim()
-  const llmModel = body.llmModel?.trim()
-  const llmApiKey = body.llmApiKey?.trim()
-  const llmBaseUrl = body.llmBaseUrl?.trim()
-  const discordUserId = body.discordUserId?.trim()
-  const discordChannelId = body.discordChannelId?.trim()
-  const discordGuildId = body.discordGuildId?.trim()
-  const platform = body.platform?.trim()
-
-  if (!name) throw new Error('Bot name is required')
-  if (!platform) throw new Error('Bot platform is required')
-  if (platform !== 'discord') throw new Error('Only Discord bots are currently supported')
-  if (!token) throw new Error('Bot token is required')
-  if (!roleId) throw new Error('Role is required')
-  if (!llmPlatformName) throw new Error('Model platform is required')
-  if (!llmModel) throw new Error('Model is required')
-  if (!llmApiKey) throw new Error('Model API key is required')
-  if (!llmBaseUrl) throw new Error('Model base URL is required')
-  if (!discordGuildId) throw new Error('Discord guild ID is required')
-
-  return {
-    name,
-    platform: 'discord' as const,
-    token,
-    roleId,
-    llmProvider: 'openai' as const,
-    llmPlatformName,
-    llmModel,
-    llmApiKey,
-    llmBaseUrl,
-    discordUserId,
-    discordChannelId,
-    discordGuildId,
-    enabled: Boolean(body.enabled),
+  const normalized = normalizeBotEditorInput(body, { enabledDefault: false })
+  const error = getBotEditorInputError(normalized)
+  if (error) {
+    throw new Error(error)
   }
+
+  return normalized
 }
 
 export function parseCreateConversationTopicInput(body: Partial<CreateConversationTopicInput>) {
