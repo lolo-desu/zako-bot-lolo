@@ -72,13 +72,13 @@ Status: Completed
 
 ## Phase 6: Panel Feature Structure
 
-Status: Pending
+Status: In Progress
 
-- [ ] Move panel API wrappers into feature composables under `composables/api/`.
+- [x] Move panel API wrappers into feature composables under `composables/api/`.
 - [ ] Split large Vue pages into page shell + feature components.
 - [ ] Extract reusable form state/normalization into composables or utilities.
-- [ ] Preserve Nuxt routes and visual behavior.
-- [ ] Run `@zakobot/panel typecheck` and build.
+- [x] Preserve Nuxt routes and visual behavior.
+- [x] Run `@zakobot/panel typecheck` and build.
 - [ ] Commit and deploy.
 
 ## Phase 7: Shared Runtime Contracts

@@ -50,9 +50,11 @@
 
 <script setup lang="ts">
 import type { BotEditorInput, BotProfile, RoleProfile } from '@zakobot/shared'
+import { useBotsApi } from '~/composables/api/useBotsApi'
 
 const route = useRoute()
 const toast = useToast()
+const botsApi = useBotsApi()
 const botId = computed(() => String(route.params.id))
 
 const [
@@ -116,13 +118,10 @@ async function handleSubmit(payload: BotEditorInput) {
   saving.value = true
 
   try {
-    const updated = await $fetch<{ ok: true, data: BotProfile }>(`/api/bots/${botId.value}`, {
-      method: 'PUT',
-      body: payload,
-    })
+    const updated = await botsApi.update(botId.value, payload)
 
-    data.value = updated
-    toast.add({ title: `已保存机器人「${updated.data.name}」`, color: 'success' })
+    data.value = { ok: true, data: updated }
+    toast.add({ title: `已保存机器人「${updated.name}」`, color: 'success' })
     await refresh()
   }
   catch (error: any) {
@@ -154,11 +153,9 @@ async function handleDelete() {
   deleting.value = true
 
   try {
-    const deleted = await $fetch<{ ok: true, data: BotProfile }>(`/api/bots/${botId.value}`, {
-      method: 'DELETE',
-    })
+    const deleted = await botsApi.remove(botId.value)
 
-    toast.add({ title: `已删除机器人「${deleted.data.name}」`, color: 'success' })
+    toast.add({ title: `已删除机器人「${deleted.name}」`, color: 'success' })
     showDeleteConfirm.value = false
     await navigateTo('/bots')
   }

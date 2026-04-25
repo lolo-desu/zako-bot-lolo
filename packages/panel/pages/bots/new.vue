@@ -22,9 +22,11 @@
 </template>
 
 <script setup lang="ts">
-import type { BotEditorInput, BotProfile, RoleProfile } from '@zakobot/shared'
+import type { BotEditorInput, RoleProfile } from '@zakobot/shared'
+import { useBotsApi } from '~/composables/api/useBotsApi'
 
 const toast = useToast()
+const botsApi = useBotsApi()
 
 const { data: rolesData, error: rolesError } = await useFetch<{ ok: true, data: RoleProfile[] }>('/api/roles')
 
@@ -56,13 +58,10 @@ async function handleSubmit(payload: BotEditorInput) {
   pending.value = true
 
   try {
-    const created = await $fetch<{ ok: true, data: BotProfile }>('/api/bots', {
-      method: 'POST',
-      body: payload,
-    })
+    const created = await botsApi.create(payload)
 
-    toast.add({ title: `已创建机器人「${created.data.name}」`, color: 'success' })
-    await navigateTo(`/bots/${created.data.id}`)
+    toast.add({ title: `已创建机器人「${created.name}」`, color: 'success' })
+    await navigateTo(`/bots/${created.id}`)
   }
   catch (error: any) {
     toast.add({
