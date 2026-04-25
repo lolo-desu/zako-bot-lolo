@@ -25,6 +25,7 @@ import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
 import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile, toRoleProfile } from './serializers.js'
 import { getSettingsRoute } from './routes/settings.js'
+import { getSkillsRoute } from './routes/skills.js'
 import { getSystemRoute } from './routes/system.js'
 import {
   parseBotInput,
@@ -32,8 +33,6 @@ import {
   parseMcpServerInput,
   parseRoleInput,
   parseSendConversationMessageInput,
-  parseSkillImportInput,
-  parseSkillInput,
 } from './validators.js'
 import type {
   ApiResponse,
@@ -43,10 +42,6 @@ import type {
   McpServerStatus,
   SendConversationMessageInput,
   SendConversationMessageResult,
-  SkillContent,
-  SkillEditorInput,
-  SkillImportInput,
-  SkillProfile,
 } from '@zakobot/shared'
 
 export class ApiServer {
@@ -206,28 +201,9 @@ export class ApiServer {
       return this.json(res, systemRoute.body, systemRoute.status)
     }
 
-    if (pathname === '/skills' && req.method === 'GET') {
-      return this.json<SkillProfile[]>(res, { ok: true, data: this.skillManager.list() })
-    }
-
-    if (pathname === '/skills' && req.method === 'POST') {
-      try {
-        const payload = parseSkillInput(await this.readJson<SkillEditorInput>(req))
-        return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.create(payload) }, 201)
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (pathname === '/skills/import' && req.method === 'POST') {
-      try {
-        const payload = parseSkillImportInput(await this.readJson<SkillImportInput>(req))
-        return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.import(payload) }, 201)
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
+    const skillsRoute = await getSkillsRoute(req, pathname, this.skillManager)
+    if (skillsRoute) {
+      return this.json(res, skillsRoute.body, skillsRoute.status)
     }
 
     if (pathname === '/mcp/status' && req.method === 'GET') {
@@ -525,54 +501,6 @@ export class ApiServer {
       }
       catch (error) {
         return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    const skillContentMatch = pathname.match(/^\/skills\/([^/]+)\/content$/)
-    if (skillContentMatch && req.method === 'GET') {
-      try {
-        return this.json<SkillContent>(res, { ok: true, data: this.skillManager.getContent(skillContentMatch[1]) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Skill not found', 404)
-      }
-    }
-
-    const skillMatch = pathname.match(/^\/skills\/([^/]+)$/)
-    if (skillMatch && req.method === 'GET') {
-      const skill = this.skillManager.get(skillMatch[1])
-
-      if (!skill) {
-        return this.json(res, { ok: false, error: 'Skill not found' }, 404)
-      }
-
-      return this.json<SkillProfile>(res, { ok: true, data: skill })
-    }
-
-    if (skillMatch && req.method === 'PUT') {
-      if (!this.skillManager.get(skillMatch[1])) {
-        return this.json(res, { ok: false, error: 'Skill not found' }, 404)
-      }
-
-      try {
-        const payload = parseSkillInput(await this.readJson<SkillEditorInput>(req))
-        return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.update(skillMatch[1], payload) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (skillMatch && req.method === 'DELETE') {
-      if (!this.skillManager.get(skillMatch[1])) {
-        return this.json(res, { ok: false, error: 'Skill not found' }, 404)
-      }
-
-      try {
-        return this.json<SkillProfile>(res, { ok: true, data: this.skillManager.remove(skillMatch[1]) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Failed to delete skill')
       }
     }
 
