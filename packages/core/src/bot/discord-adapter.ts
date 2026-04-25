@@ -5,15 +5,13 @@ import {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
 } from 'discord.js'
 import type { ButtonInteraction, ChatInputCommandInteraction, Interaction, Message, MessageEditOptions, ModalSubmitInteraction, TextBasedChannel } from 'discord.js'
 import type { BotInstanceRow, RoleRow } from '@zakobot/database'
 import type { AgentEvent, GeneralSettings, ToolApprovalCallback, ToolApprovalDecision } from '@zakobot/shared'
 import type { Agent } from '../llm/agent.js'
 import type { ConversationScope, ConversationService } from '../llm/conversation-service.js'
+import { handleApprovalInteraction, type PendingApproval, replyEphemeral, type RepliableInteraction } from './discord-approval-interactions.js'
 import { handleDiscordSlashCommand, MANUAL_BROWSER_COMMAND, NEW_TOPIC_COMMAND, registerDiscordCommands, STOP_COMMAND } from './discord-commands.js'
 import { buildAssistantMessageChunks } from './discord-stream-renderer.js'
 import { DiscordModelCommand, MODEL_COMMAND } from './model-command.js'
@@ -43,13 +41,6 @@ type QueuedRequest = {
   reject: (reason?: unknown) => void
 }
 
-type PendingApproval = {
-  finish: (decision: ToolApprovalDecision) => Promise<void>
-  remember: () => Promise<void>
-  guide: (interaction: ModalSubmitInteraction, guidance: string) => Promise<void>
-  askAI: (interaction: ModalSubmitInteraction, question: string) => Promise<void>
-}
-
 type ToolProgressEntry = {
   kind: 'tool'
   id: string
@@ -73,8 +64,6 @@ type PendingApprovalMessage = {
 }
 
 type CreateMessage = (payload: MsgPayload) => Promise<Message>
-
-type RepliableInteraction = ButtonInteraction | ModalSubmitInteraction | ChatInputCommandInteraction
 
 const MAX_DISCORD_MESSAGE_CHARS = 1900
 
@@ -528,7 +517,7 @@ export class DiscordAdapter {
           },
           guide: async (interaction, guidance) => {
             const trimmed = guidance.trim()
-            await this.replyEphemeral(interaction, trimmed ? '已记录指导，模型会按你的要求改方案。' : '未填写指导内容，已按拒绝处理。')
+            await replyEphemeral(interaction, trimmed ? '已记录指导，模型会按你的要求改方案。' : '未填写指导内容，已按拒绝处理。')
             await finalize(
               trimmed ? { approved: false, guidance: trimmed } : { approved: false },
               trimmed ? `🧭 已指导：${summary}（指导：${trimmed}）` : `❌ 已拒绝：${summary}`,
@@ -1079,15 +1068,6 @@ export class DiscordAdapter {
     ].join('\n')
   }
 
-  private async replyEphemeral(interaction: RepliableInteraction, content: string) {
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp({ content, flags: MessageFlags.Ephemeral }).catch(() => {})
-      return
-    }
-
-    await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {})
-  }
-
   private extractDeniedReason(result: string) {
     if (result === 'User denied this tool call.') {
       return ''
@@ -1159,56 +1139,29 @@ export class DiscordAdapter {
       .filter(Boolean)
   }
 
-  private parseInteractionAction(customId: string) {
-    const separatorIndex = customId.indexOf(':')
-    if (separatorIndex === -1) {
-      return { action: customId, value: '' }
-    }
-
-    return {
-      action: customId.slice(0, separatorIndex),
-      value: customId.slice(separatorIndex + 1),
-    }
-  }
-
   private async ensureInteractionAllowed(interaction: RepliableInteraction) {
     if (!this.isAllowedDiscordUser(interaction.user.id)) {
-      await this.replyEphemeral(interaction, '你不在此机器人的允许用户列表中。')
+      await replyEphemeral(interaction, '你不在此机器人的允许用户列表中。')
       return false
     }
 
     if (this.instance.discordGuildId && interaction.guildId !== this.instance.discordGuildId) {
-      await this.replyEphemeral(interaction, '此交互只能在已配置的 Discord 服务器中使用。')
+      await replyEphemeral(interaction, '此交互只能在已配置的 Discord 服务器中使用。')
       return false
     }
 
     if (!interaction.channelId) {
-      await this.replyEphemeral(interaction, '无法识别当前频道，无法执行此交互。')
+      await replyEphemeral(interaction, '无法识别当前频道，无法执行此交互。')
       return false
     }
 
     const parentChannelId = interaction.channel?.isThread() ? interaction.channel.parentId : null
     if (!this.isAllowedDiscordChannel(interaction.channelId, parentChannelId)) {
-      await this.replyEphemeral(interaction, '此交互只能在已配置的频道或其子区中使用。')
+      await replyEphemeral(interaction, '此交互只能在已配置的频道或其子区中使用。')
       return false
     }
 
     return true
-  }
-
-  private buildApprovalQuestionModal(customId: string, title: string, label: string, placeholder: string, required: boolean) {
-    const input = new TextInputBuilder()
-      .setCustomId('question')
-      .setLabel(label)
-      .setStyle(TextInputStyle.Paragraph)
-      .setRequired(required)
-      .setMaxLength(500)
-      .setPlaceholder(placeholder)
-
-    return new ModalBuilder()
-      .setCustomId(customId)
-      .setTitle(title)
-      .addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(input))
   }
 
   private async handleInteraction(interaction: Interaction) {
@@ -1220,84 +1173,8 @@ export class DiscordAdapter {
       return
     }
 
-    if (interaction.isButton()) {
-      const { action, value: callId } = this.parseInteractionAction(interaction.customId)
-      const approval = callId ? this.pendingApprovals.get(callId) : undefined
-
-      if (!callId || !action.startsWith('tool_')) {
-        return
-      }
-
-      if (!approval) {
-        await this.replyEphemeral(interaction, '此操作已过期。')
-        return
-      }
-
-      if (action === 'tool_approve') {
-        await interaction.deferUpdate().catch(() => {})
-        await approval.finish({ approved: true })
-        return
-      }
-
-      if (action === 'tool_always') {
-        await interaction.deferUpdate().catch(() => {})
-        await approval.remember()
-        return
-      }
-
-      if (action === 'tool_deny') {
-        await interaction.deferUpdate().catch(() => {})
-        await approval.finish({ approved: false })
-        return
-      }
-
-      if (action === 'tool_guide') {
-        await interaction.showModal(this.buildApprovalQuestionModal(
-          `tool_guide_modal:${callId}`,
-          '指导模型',
-          '指导内容',
-          '例如：先 ls 确认目录，再仅删除临时文件，不要直接 rm -rf。',
-          true,
-        )).catch(() => {})
-        return
-      }
-
-      if (action === 'tool_ask_ai') {
-        await interaction.showModal(this.buildApprovalQuestionModal(
-          `tool_ask_ai_modal:${callId}`,
-          '临时问 AI',
-          '你想问什么？',
-          '例如：为什么现在需要执行这一步？如果拒绝会卡在哪里？',
-          false,
-        )).catch(() => {})
-        return
-      }
-    }
-
-    if (interaction.isModalSubmit()) {
-      const { action, value: callId } = this.parseInteractionAction(interaction.customId)
-      const approval = callId ? this.pendingApprovals.get(callId) : undefined
-
-      if (!callId || !action.startsWith('tool_')) {
-        return
-      }
-
-      if (!approval) {
-        await this.replyEphemeral(interaction, '此操作已过期。')
-        return
-      }
-
-      const question = interaction.fields.getTextInputValue('question').trim()
-
-      if (action === 'tool_guide_modal') {
-        await approval.guide(interaction, question)
-        return
-      }
-
-      if (action === 'tool_ask_ai_modal') {
-        await approval.askAI(interaction, question)
-        return
-      }
+    if ((interaction.isButton() || interaction.isModalSubmit()) && await handleApprovalInteraction(interaction, this.pendingApprovals)) {
+      return
     }
 
     if (!interaction.isChatInputCommand()) return
