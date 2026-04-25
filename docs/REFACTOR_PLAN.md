@@ -61,14 +61,14 @@ Status: Completed
 
 ## Phase 5: Memory Architecture
 
-Status: In Progress
+Status: Completed
 
 - [x] Move memory extraction prompt/parsing out of `Agent`.
 - [x] Move memory ranking/search terms out of `LocalMemoryService` if it grows further.
 - [x] Add clear logs for memory save/list/delete and background extraction outcomes.
-- [ ] Add panel visibility for stored memories if needed.
+- [x] Decide panel visibility for stored memories is not needed yet; keep settings-only UI for now.
 - [x] Build affected packages.
-- [ ] Commit and deploy.
+- [x] Commit and deploy.
 
 ## Phase 6: Panel Feature Structure
 
