@@ -12,31 +12,26 @@ import type {
   SkillEditorInput,
   SkillImportInput,
 } from '@zakobot/shared'
-import { getBotEditorInputError, normalizeBotEditorInput } from '@zakobot/shared'
+import {
+  getBotEditorInputError,
+  getRoleEditorInputError,
+  normalizeBotEditorInput,
+  normalizeEnabledToolNames,
+  normalizeRoleEditorInput,
+} from '@zakobot/shared'
 import { normalizeBrowseSettings } from '../settings/browse-settings.js'
 import { normalizeGeneralSettings } from '../settings/general-settings.js'
 import { normalizeLocalMemorySettings } from '../settings/local-memory-settings.js'
 import { normalizeSearchSettings } from '../settings/search-settings.js'
 
 export function parseRoleInput(body: Partial<RoleEditorInput>) {
-  const name = body.name?.trim()
-  const systemPrompt = body.systemPrompt?.trim()
-
-  if (!name) {
-    throw new Error('Role name is required')
+  const normalized = normalizeRoleEditorInput(body)
+  const error = getRoleEditorInputError(normalized)
+  if (error) {
+    throw new Error(error)
   }
 
-  if (!systemPrompt) {
-    throw new Error('Role systemPrompt is required')
-  }
-
-  return {
-    avatar: body.avatar?.trim() ?? '',
-    name,
-    systemPrompt,
-    enabledTools: normalizeEnabledTools(body.enabledTools),
-    enabledSkills: normalizeEnabledSkills(body.enabledSkills),
-  }
+  return normalized
 }
 
 export function parseSkillInput(body: Partial<SkillEditorInput>): SkillEditorInput {
@@ -53,7 +48,7 @@ export function parseSkillInput(body: Partial<SkillEditorInput>): SkillEditorInp
     description,
     content,
     enabled: body.enabled === false ? false : true,
-    requiredTools: normalizeEnabledTools(body.requiredTools),
+    requiredTools: normalizeEnabledToolNames(body.requiredTools),
   }
 }
 
@@ -187,53 +182,4 @@ function normalizeStringRecord(value: unknown): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   )
-}
-
-function normalizeEnabledTools(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  const builtinTools = new Set<string>(['web_search', 'web_browse', 'shell_exec', 'file_read', 'file_write', 'file_edit', 'file_list'])
-  const result: string[] = []
-  const seen = new Set<string>()
-
-  for (const tool of value) {
-    if (typeof tool !== 'string' || seen.has(tool)) {
-      continue
-    }
-
-    seen.add(tool)
-
-    if (builtinTools.has(tool) || /^mcp__[a-zA-Z0-9_-]+__.+$/.test(tool)) {
-      result.push(tool)
-    }
-  }
-
-  return result
-}
-
-function normalizeEnabledSkills(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return []
-  }
-
-  const result: string[] = []
-  const seen = new Set<string>()
-
-  for (const skillId of value) {
-    if (typeof skillId !== 'string') {
-      continue
-    }
-
-    const normalized = skillId.trim()
-    if (!normalized || seen.has(normalized)) {
-      continue
-    }
-
-    seen.add(normalized)
-    result.push(normalized)
-  }
-
-  return result
 }

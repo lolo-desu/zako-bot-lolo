@@ -258,6 +258,11 @@
 </template>
 
 <script setup lang="ts">
+import {
+  createDefaultRoleEditorInput,
+  getRoleEditorInputError,
+  normalizeRoleEditorInput,
+} from '@zakobot/shared'
 import type { McpServerStatus, RoleEditorInput, SkillProfile } from '@zakobot/shared'
 
 const props = defineProps<{
@@ -272,13 +277,8 @@ const emit = defineEmits<{
   submit: [value: RoleEditorInput]
 }>()
 
-const state = reactive<RoleEditorInput>({
-  avatar: '',
-  name: '',
-  systemPrompt: '',
-  enabledTools: [],
-  enabledSkills: [],
-})
+const state = reactive<RoleEditorInput>(createDefaultRoleEditorInput())
+const normalizedState = computed(() => normalizeRoleEditorInput(state))
 
 interface ToolPermissionItem {
   value: string
@@ -357,8 +357,7 @@ watch(() => state.avatar, () => {
 })
 
 const canSubmit = computed(() =>
-  state.name.trim().length > 0
-  && state.systemPrompt.trim().length > 0,
+  getRoleEditorInputError(normalizedState.value) === null,
 )
 
 const skills = computed(() => skillsData.value?.data ?? [])
@@ -459,13 +458,7 @@ function handleSubmit() {
     return
   }
 
-  emit('submit', {
-    avatar: state.avatar.trim(),
-    name: state.name.trim(),
-    systemPrompt: state.systemPrompt.trim(),
-    enabledTools: [...state.enabledTools],
-    enabledSkills: [...state.enabledSkills],
-  })
+  emit('submit', normalizedState.value)
 }
 
 function refreshMcpStatus() {

@@ -10,18 +10,13 @@
 </template>
 
 <script setup lang="ts">
+import { createDefaultRoleEditorInput } from '@zakobot/shared'
 import type { RoleEditorInput, RoleProfile } from '@zakobot/shared'
 
 const toast = useToast()
 
 const pending = ref(false)
-const form: RoleEditorInput = {
-  avatar: '',
-  name: '',
-  systemPrompt: '',
-  enabledTools: [],
-  enabledSkills: [],
-}
+const form: RoleEditorInput = createDefaultRoleEditorInput()
 
 async function handleSubmit(payload: RoleEditorInput) {
   pending.value = true

@@ -48,6 +48,7 @@
 </template>
 
 <script setup lang="ts">
+import { normalizeRoleEditorInput } from '@zakobot/shared'
 import type { RoleEditorInput, RoleProfile } from '@zakobot/shared'
 
 const route = useRoute()
@@ -63,13 +64,7 @@ const deleting = ref(false)
 const showDeleteConfirm = ref(false)
 
 const role = computed(() => data.value?.data ?? null)
-const form = computed<RoleEditorInput>(() => ({
-  avatar: role.value?.avatar ?? '',
-  name: role.value?.name ?? '',
-  systemPrompt: role.value?.systemPrompt ?? '',
-  enabledTools: role.value?.enabledTools ?? [],
-  enabledSkills: role.value?.enabledSkills ?? [],
-}))
+const form = computed<RoleEditorInput>(() => normalizeRoleEditorInput(role.value ?? {}))
 
 const deleteConfirmActions = computed(() => [
   {
