@@ -8,9 +8,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: result }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to send conversation message',
-    })
+    throw toPanelApiError(error, 'Failed to send conversation message')
   }
 })

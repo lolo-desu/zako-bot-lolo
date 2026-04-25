@@ -8,9 +8,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: topic }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to create conversation topic',
-    })
+    throw toPanelApiError(error, 'Failed to create conversation topic')
   }
 })

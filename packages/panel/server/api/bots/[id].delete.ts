@@ -14,10 +14,7 @@ export default defineEventHandler(async (event) => {
     const bot = await coreDelete<BotProfile>(`/bots/${id}`)
     return { ok: true, data: bot }
   }
-  catch (error: any) {
-    throw createError({
-      statusCode: error?.statusCode ?? 400,
-      message: error?.message ?? 'Failed to delete bot',
-    })
+  catch (error) {
+    throw toPanelApiError(error, 'Failed to delete bot')
   }
 })

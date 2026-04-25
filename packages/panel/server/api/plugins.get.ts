@@ -5,7 +5,7 @@ export default defineEventHandler(async () => {
     const plugins = await coreGet<PluginInfo[]>('/plugins')
     return { ok: true, data: plugins }
   }
-  catch {
-    throw createError({ statusCode: 503, message: 'Core is unreachable' })
+  catch (error) {
+    throw toPanelApiError(error, 'Core is unreachable')
   }
 })

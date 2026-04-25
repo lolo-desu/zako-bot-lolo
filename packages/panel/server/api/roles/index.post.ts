@@ -8,9 +8,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: role }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to create role',
-    })
+    throw toPanelApiError(error, 'Failed to create role')
   }
 })

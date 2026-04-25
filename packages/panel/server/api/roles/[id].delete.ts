@@ -11,10 +11,7 @@ export default defineEventHandler(async (event) => {
     const role = await coreDelete<RoleProfile>(`/roles/${id}`)
     return { ok: true, data: role }
   }
-  catch (error: any) {
-    throw createError({
-      statusCode: error?.statusCode ?? 400,
-      message: error?.message ?? 'Failed to delete role',
-    })
+  catch (error) {
+    throw toPanelApiError(error, 'Failed to delete role')
   }
 })

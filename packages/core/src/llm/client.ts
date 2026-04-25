@@ -16,6 +16,10 @@ type LLMRequestOptions = {
   onRateLimitRetry?: RateLimitRetryHandler
 }
 
+type LLMChatOptions = LLMRequestOptions & {
+  requestApproval?: ToolApprovalCallback
+}
+
 type LLMStreamOptions = LLMRequestOptions & {
   maxToolCallRounds?: number
   requestApproval?: ToolApprovalCallback
@@ -82,15 +86,21 @@ export class LLMClient {
     }
   }
 
-  async chat(messages: ChatMessage[], tools: LLMTool[] = [], maxToolCallRounds = MAX_TOOL_CALL_ROUNDS): Promise<string> {
+  async chat(
+    messages: ChatMessage[],
+    tools: LLMTool[] = [],
+    maxToolCallRounds = MAX_TOOL_CALL_ROUNDS,
+    options: LLMChatOptions = {},
+  ): Promise<string> {
     if (this.genai) {
-      return this.chatVertex(messages, tools, maxToolCallRounds)
+      return this.chatVertex(messages, tools, maxToolCallRounds, options)
     }
 
     const requestMessages: OpenAI.Chat.ChatCompletionMessageParam[] = messages.map(m => this.toOpenAIMessage(m))
     const toolDefinitions = this.buildToolDefinitions(tools)
 
     for (let i = 0; i < maxToolCallRounds; i += 1) {
+      this.throwIfAborted(options.abortSignal)
       const response = await this.requestWithRetry(() => this.openai!.chat.completions.create({
         model: this.config.model,
         messages: requestMessages,
@@ -100,7 +110,7 @@ export class LLMClient {
               tool_choice: 'auto' as const,
             }
           : {}),
-      }))
+      }), options)
 
       const message = response.choices[0]?.message
 
@@ -111,7 +121,7 @@ export class LLMClient {
       }
 
       requestMessages.push(this.toAssistantToolCallMessage(message))
-      requestMessages.push(...await this.executeToolCalls(message, tools))
+      requestMessages.push(...await this.executeToolCalls(message, tools, options))
     }
 
     console.warn(`[LLM] Reached tool-call limit (${maxToolCallRounds}); requesting final answer without tools.`)
@@ -125,7 +135,7 @@ export class LLMClient {
           content: TOOL_LIMIT_FINAL_INSTRUCTION,
         },
       ],
-    }))
+    }), options)
 
     const finalMessage = finalResponse.choices[0]?.message
 
@@ -267,11 +277,12 @@ export class LLMClient {
 
   // ── Vertex AI (Google GenAI SDK) ──────────────────────────────────────────
 
-  private async chatVertex(messages: ChatMessage[], tools: LLMTool[], maxRounds: number): Promise<string> {
+  private async chatVertex(messages: ChatMessage[], tools: LLMTool[], maxRounds: number, options: LLMChatOptions): Promise<string> {
     const { systemInstruction, contents } = await this.toGenAIContents(messages)
     const genAITools = this.buildGenAITools(tools)
 
     for (let round = 0; round < maxRounds; round++) {
+      this.throwIfAborted(options.abortSignal)
       const response = await this.requestWithRetry(() => this.genai!.models.generateContent({
         model: this.config.model,
         contents,
@@ -279,7 +290,7 @@ export class LLMClient {
           ...(systemInstruction ? { systemInstruction } : {}),
           ...(genAITools.length ? { tools: genAITools } : {}),
         },
-      }))
+      }), options)
 
       const parts: Part[] = response.candidates?.[0]?.content?.parts ?? []
       const funcCalls = parts.filter(p => p.functionCall)
@@ -297,6 +308,16 @@ export class LLMClient {
         try {
           if (!tool) throw new Error(`Tool "${fc.name}" is not available`)
           const args = (fc.args ?? {}) as Record<string, unknown>
+
+          if (options.requestApproval) {
+            const decision = await options.requestApproval(genCallId(), fc.name!, args)
+            if (!decision.approved) {
+              result = this.formatDeniedToolResult(decision)
+              responseParts.push({ functionResponse: { name: fc.name!, response: { result } } })
+              continue
+            }
+          }
+
           console.log(`[ToolCall] ${fc.name} ${this.formatLogValue(args)}`)
           result = await tool.execute(args)
           console.log(`[ToolResult] ${fc.name} ok length=${result.length}`)
@@ -315,7 +336,7 @@ export class LLMClient {
       model: this.config.model,
       contents,
       config: systemInstruction ? { systemInstruction } : {},
-    }))
+    }), options)
     return final.candidates?.[0]?.content?.parts?.filter(p => p.text).map(p => p.text).join('') ?? ''
   }
 
@@ -529,6 +550,7 @@ export class LLMClient {
   private async executeToolCalls(
     assistantMessage: OpenAI.Chat.ChatCompletionMessage,
     tools: LLMTool[],
+    options: LLMChatOptions,
   ): Promise<OpenAI.Chat.ChatCompletionMessageParam[]> {
     const toolCallMessages: OpenAI.Chat.ChatCompletionMessageParam[] = []
 
@@ -543,6 +565,20 @@ export class LLMClient {
         }
 
         const args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>
+
+        if (options.requestApproval) {
+          const decision = await options.requestApproval(toolCall.id, tool.name, args)
+          if (!decision.approved) {
+            result = this.formatDeniedToolResult(decision)
+            toolCallMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: result,
+            })
+            continue
+          }
+        }
+
         console.log(`[ToolCall] ${tool.name} ${this.formatLogValue(args)}`)
         result = await tool.execute(args)
         console.log(`[ToolResult] ${tool.name} ok length=${result.length}`)
@@ -559,6 +595,14 @@ export class LLMClient {
     }
 
     return toolCallMessages
+  }
+
+  private formatDeniedToolResult(decision: { reason?: string; guidance?: string }) {
+    return decision.guidance?.trim()
+      ? `User denied this tool call. Guidance: ${decision.guidance.trim()}`
+      : decision.reason?.trim()
+          ? `User denied this tool call. Reason: ${decision.reason.trim()}`
+          : 'User denied this tool call.'
   }
 
   private toAssistantToolCallMessage(

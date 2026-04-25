@@ -15,9 +15,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: bot }
   }
   catch (error) {
-    throw createError({
-      statusCode: 404,
-      message: error instanceof Error ? error.message : 'Failed to fetch bot',
-    })
+    throw toPanelApiError(error, 'Failed to fetch bot')
   }
 })

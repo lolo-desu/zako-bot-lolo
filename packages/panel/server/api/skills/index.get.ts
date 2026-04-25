@@ -6,9 +6,6 @@ export default defineEventHandler(async () => {
     return { ok: true, data: skills }
   }
   catch (error) {
-    throw createError({
-      statusCode: 503,
-      message: error instanceof Error ? error.message : 'Core is unreachable',
-    })
+    throw toPanelApiError(error, 'Core is unreachable')
   }
 })

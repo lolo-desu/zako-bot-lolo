@@ -11,9 +11,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: content }
   }
   catch (error) {
-    throw createError({
-      statusCode: 404,
-      message: error instanceof Error ? error.message : 'Skill content not found',
-    })
+    throw toPanelApiError(error, 'Skill content not found')
   }
 })

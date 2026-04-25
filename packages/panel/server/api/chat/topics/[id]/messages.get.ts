@@ -19,9 +19,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: messages }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to load conversation messages',
-    })
+    throw toPanelApiError(error, 'Failed to load conversation messages')
   }
 })

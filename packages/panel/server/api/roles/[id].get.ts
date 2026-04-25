@@ -12,9 +12,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: role }
   }
   catch (error) {
-    throw createError({
-      statusCode: 404,
-      message: error instanceof Error ? error.message : 'Role not found',
-    })
+    throw toPanelApiError(error, 'Role not found')
   }
 })

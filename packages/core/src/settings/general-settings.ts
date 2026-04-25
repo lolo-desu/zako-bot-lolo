@@ -29,7 +29,7 @@ export function saveGeneralSettings(db: DB, value: Partial<GeneralSettings>): Ge
   return settings
 }
 
-function normalizeGeneralSettings(value: Record<string, unknown>): GeneralSettings {
+export function normalizeGeneralSettings(value: Record<string, unknown>): GeneralSettings {
   return {
     systemPrompt: typeof value.systemPrompt === 'string' ? value.systemPrompt.trim() : '',
     maxToolCallRounds: normalizeMaxToolCallRounds(value.maxToolCallRounds),

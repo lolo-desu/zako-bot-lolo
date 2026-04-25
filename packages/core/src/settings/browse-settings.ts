@@ -33,7 +33,7 @@ export function saveBrowseSettings(db: DB, value: Partial<BrowseSettings>): Brow
   return settings
 }
 
-function normalizeBrowseSettings(value: Record<string, unknown>): BrowseSettings {
+export function normalizeBrowseSettings(value: Record<string, unknown>): BrowseSettings {
   return {
     provider: normalizeProvider(value.provider),
     jinaApiKey: typeof value.jinaApiKey === 'string' ? value.jinaApiKey.trim() : '',

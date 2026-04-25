@@ -32,7 +32,7 @@ export function saveLocalMemorySettings(db: DB, value: Partial<LocalMemorySettin
   return settings
 }
 
-function normalizeLocalMemorySettings(value: Record<string, unknown>): LocalMemorySettings {
+export function normalizeLocalMemorySettings(value: Record<string, unknown>): LocalMemorySettings {
   return {
     enabled: normalizeBoolean(value.enabled, false),
     maxMemories: normalizeInteger(value.maxMemories, DEFAULT_MAX_MEMORIES, 1, 20),

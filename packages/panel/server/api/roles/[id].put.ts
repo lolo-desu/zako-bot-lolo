@@ -14,9 +14,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: role }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to update role',
-    })
+    throw toPanelApiError(error, 'Failed to update role')
   }
 })

@@ -13,9 +13,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: skill }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to update skill',
-    })
+    throw toPanelApiError(error, 'Failed to update skill')
   }
 })

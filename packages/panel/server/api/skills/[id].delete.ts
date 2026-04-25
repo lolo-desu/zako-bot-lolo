@@ -11,9 +11,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: skill }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to delete skill',
-    })
+    throw toPanelApiError(error, 'Failed to delete skill')
   }
 })

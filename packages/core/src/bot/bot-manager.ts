@@ -148,7 +148,19 @@ export class BotManager {
     })!
 
     const agent = this.createAgent(row)
-    const reply = await agent.respond(topic.id)
+    const reply = await agent.respond(topic.id, {
+      requestApproval: async (_callId, name) => {
+        const tool = this.toolRegistry.list().find(item => item.name === name)
+        if (tool?.sensitive) {
+          return {
+            approved: false,
+            reason: 'Sensitive tool calls from the panel are blocked because no approval UI is available.',
+          }
+        }
+
+        return { approved: true }
+      },
+    })
 
     const assistantMessage = this.conversations.appendMessage(row.instance, topic.id, scope, {
       role: 'assistant',

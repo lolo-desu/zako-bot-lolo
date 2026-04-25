@@ -28,7 +28,7 @@ export function saveSearchSettings(db: DB, value: Partial<SearchSettings>): Sear
   return settings
 }
 
-function normalizeSearchSettings(value: Partial<SearchSettings> & Record<string, unknown>): SearchSettings {
+export function normalizeSearchSettings(value: Partial<SearchSettings> & Record<string, unknown>): SearchSettings {
   return {
     provider: normalizeProvider(value.provider),
     tavilyApiKey: typeof value.tavilyApiKey === 'string' ? value.tavilyApiKey.trim() : '',

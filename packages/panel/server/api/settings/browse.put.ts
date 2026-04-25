@@ -8,9 +8,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: settings }
   }
   catch (error) {
-    throw createError({
-      statusCode: 400,
-      message: error instanceof Error ? error.message : 'Failed to update browse settings',
-    })
+    throw toPanelApiError(error, 'Failed to update browse settings')
   }
 })

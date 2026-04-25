@@ -22,10 +22,10 @@ import type { BotManager } from '../bot/bot-manager.js'
 import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
-import { getSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
-import { getBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
-import { getGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
-import { getLocalMemorySettings, saveLocalMemorySettings } from '../settings/local-memory-settings.js'
+import { getSearchSettings, normalizeSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
+import { getBrowseSettings, normalizeBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
+import { getGeneralSettings, normalizeGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
+import { getLocalMemorySettings, normalizeLocalMemorySettings, saveLocalMemorySettings } from '../settings/local-memory-settings.js'
 import type {
   ApiResponse,
   BotEditorInput,
@@ -455,75 +455,19 @@ export class ApiServer {
   }
 
   private parseGeneralSettingsInput(body: Partial<GeneralSettings>): GeneralSettings {
-    const rounds = typeof body.maxToolCallRounds === 'number'
-      ? body.maxToolCallRounds
-      : Number(body.maxToolCallRounds)
-    const maxToolCallRounds = Number.isFinite(rounds)
-      ? Math.min(Math.max(Math.trunc(rounds), 1), 32)
-      : 8
-    const toolApprovalMode = body.toolApprovalMode === 'all' || body.toolApprovalMode === 'sensitive' || body.toolApprovalMode === 'none'
-      ? body.toolApprovalMode
-      : 'all'
-    const toolProcessMode = body.toolProcessMode === 'none' || body.toolProcessMode === 'tools_only' || body.toolProcessMode === 'full'
-      ? body.toolProcessMode
-      : 'full'
-    const maxThreadsRaw = typeof body.maxThreadsPerChannel === 'number'
-      ? body.maxThreadsPerChannel
-      : Number(body.maxThreadsPerChannel)
-    const maxThreadsPerChannel = Number.isFinite(maxThreadsRaw) && maxThreadsRaw >= 0
-      ? Math.min(Math.trunc(maxThreadsRaw), 100)
-      : 0
-    return {
-      systemPrompt: body.systemPrompt?.trim() ?? '',
-      maxToolCallRounds,
-      requireMention: body.requireMention === false ? false : true,
-      threadMode: body.threadMode === true ? true : false,
-      maxThreadsPerChannel,
-      sendTime: body.sendTime === true ? true : false,
-      timezone: typeof body.timezone === 'string' && body.timezone.trim() ? body.timezone.trim() : 'UTC',
-      toolApprovalMode,
-      toolProcessMode,
-    }
+    return normalizeGeneralSettings(body as Record<string, unknown>)
   }
 
   private parseSearchSettingsInput(body: Partial<SearchSettings>): SearchSettings {
-    return {
-      provider: body.provider === 'tavily' ? 'tavily' : 'google_web',
-      tavilyApiKey: body.tavilyApiKey?.trim() ?? '',
-    }
+    return normalizeSearchSettings(body as Partial<SearchSettings> & Record<string, unknown>)
   }
 
   private parseBrowseSettingsInput(body: Partial<BrowseSettings>): BrowseSettings {
-    return {
-      provider: body.provider === 'jina' ? 'jina' : 'fetch',
-      jinaApiKey: body.jinaApiKey?.trim() ?? '',
-      jinaEngine: body.jinaEngine === 'direct' || body.jinaEngine === 'cf-browser-rendering'
-        ? body.jinaEngine
-        : 'browser',
-      jinaRetainImages: this.normalizeJinaRetainImages(body.jinaRetainImages),
-      jinaTokenBudgetEnabled: Boolean(body.jinaTokenBudgetEnabled),
-      jinaTokenBudget: this.normalizeJinaTokenBudget(body.jinaTokenBudget),
-    }
+    return normalizeBrowseSettings(body as Record<string, unknown>)
   }
 
   private parseLocalMemorySettingsInput(body: Partial<LocalMemorySettings>): LocalMemorySettings {
-    const maxMemoriesRaw = typeof body.maxMemories === 'number'
-      ? body.maxMemories
-      : Number(body.maxMemories)
-    const maxPromptCharsRaw = typeof body.maxPromptChars === 'number'
-      ? body.maxPromptChars
-      : Number(body.maxPromptChars)
-
-    return {
-      enabled: body.enabled === true,
-      maxMemories: Number.isFinite(maxMemoriesRaw)
-        ? Math.min(Math.max(Math.trunc(maxMemoriesRaw), 1), 20)
-        : 5,
-      maxPromptChars: Number.isFinite(maxPromptCharsRaw)
-        ? Math.min(Math.max(Math.trunc(maxPromptCharsRaw), 100), 4000)
-        : 600,
-      writebackEnabled: body.writebackEnabled !== false,
-    }
+    return normalizeLocalMemorySettings(body as Record<string, unknown>)
   }
 
   private parseJsonRecord(value: string): Record<string, unknown> {
@@ -648,28 +592,6 @@ export class ApiServer {
         error: status?.error,
       }
     })
-  }
-
-  private normalizeJinaRetainImages(value: unknown): BrowseSettings['jinaRetainImages'] {
-    return (
-      value === 'all'
-      || value === 'alt'
-      || value === 'all_p'
-      || value === 'alt_p'
-      || value === 'none'
-    )
-      ? value
-      : 'none'
-  }
-
-  private normalizeJinaTokenBudget(value: unknown) {
-    const number = typeof value === 'number' ? value : Number(value)
-
-    if (!Number.isFinite(number)) {
-      return 200_000
-    }
-
-    return Math.min(Math.max(Math.trunc(number), 1_000), 1_000_000)
   }
 
   private async handle(req: http.IncomingMessage, res: http.ServerResponse) {

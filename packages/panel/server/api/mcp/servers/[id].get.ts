@@ -12,9 +12,6 @@ export default defineEventHandler(async (event) => {
     return { ok: true, data: server }
   }
   catch (error) {
-    throw createError({
-      statusCode: 404,
-      message: error instanceof Error ? error.message : 'MCP server not found',
-    })
+    throw toPanelApiError(error, 'MCP server not found')
   }
 })

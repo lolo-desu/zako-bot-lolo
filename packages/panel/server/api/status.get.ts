@@ -5,7 +5,7 @@ export default defineEventHandler(async () => {
     const status = await coreGet<CoreStatus>('/status')
     return { ok: true, data: status }
   }
-  catch {
-    throw createError({ statusCode: 503, message: 'Core is unreachable' })
+  catch (error) {
+    throw toPanelApiError(error, 'Core is unreachable')
   }
 })

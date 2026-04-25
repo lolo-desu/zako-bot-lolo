@@ -1,5 +1,5 @@
 import type { RoleRow } from '@zakobot/database'
-import type { AgentEvent, ChatMessage, GeneralSettings, LLMConfig } from '@zakobot/shared'
+import type { AgentEvent, ChatMessage, GeneralSettings, LLMConfig, ToolApprovalCallback } from '@zakobot/shared'
 import { LLMClient } from './client.js'
 import { ConversationService } from './conversation-service.js'
 import type { RespondStreamOptions } from './respond-stream-options.js'
@@ -38,12 +38,12 @@ export class Agent {
     })
   }
 
-  async respond(topicId: string): Promise<string> {
+  async respond(topicId: string, options: { requestApproval?: ToolApprovalCallback } = {}): Promise<string> {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
     const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(topicId, role, history)
 
-    const reply = await this.client.chat(messages, allowedTools, maxToolCallRounds)
+    const reply = await this.client.chat(messages, allowedTools, maxToolCallRounds, options)
     return reply
   }
 
