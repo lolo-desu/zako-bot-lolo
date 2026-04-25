@@ -7,29 +7,25 @@ import type {
   RoleRow,
 } from '@zakobot/database'
 import { getEnabledBots, getBotWithRole, getRole, updateBot } from '@zakobot/database'
-import type { GeneralSettings, MemorySettings } from '@zakobot/shared'
+import type { GeneralSettings } from '@zakobot/shared'
 import { DiscordAdapter } from './discord-adapter.js'
 import { Agent } from '../llm/agent.js'
 import { ConversationService } from '../llm/conversation-service.js'
 import { fetchAvailableModels } from '../llm/list-models.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
-import { Mem0MemoryService } from '../memory/mem0-memory-service.js'
 
 export class BotManager {
   private adapters = new Map<string, DiscordAdapter>()
   private conversations: ConversationService
-  private memoryService: Mem0MemoryService
 
   constructor(
     private db: DB,
     private toolRegistry: ToolRegistry,
     private skillManager: SkillManager,
     private getGeneralSettings: () => GeneralSettings,
-    getMemorySettings: () => MemorySettings,
   ) {
     this.conversations = new ConversationService(db)
-    this.memoryService = new Mem0MemoryService(getMemorySettings)
   }
 
   async startAll() {
@@ -159,8 +155,6 @@ export class BotManager {
       },
     })!
 
-    void agent.rememberTopicTurn(topic.id)
-
     return {
       topic: this.conversations.getTopic(topic.id)!,
       userMessage,
@@ -266,7 +260,6 @@ export class BotManager {
     const roleId = row.role.id
     const fallbackRole = row.role
     return new Agent(
-      row.instance.id,
       () => getRole(this.db, roleId) ?? fallbackRole,
       {
         provider: row.instance.llmProvider as 'openai',
@@ -277,7 +270,6 @@ export class BotManager {
       this.conversations,
       this.toolRegistry,
       this.skillManager,
-      this.memoryService,
       this.getGeneralSettings,
     )
   }

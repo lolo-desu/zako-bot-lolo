@@ -6,19 +6,16 @@ import type { RespondStreamOptions } from './respond-stream-options.js'
 import { buildToolPrompt } from './tool-prompt.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
-import { Mem0MemoryService } from '../memory/mem0-memory-service.js'
 
 export class Agent {
   private client: LLMClient
 
   constructor(
-    private botInstanceId: string,
     private getRole: () => RoleRow,
     llmConfig: LLMConfig,
     private conversations: ConversationService,
     private toolRegistry: ToolRegistry,
     private skillManager: SkillManager,
-    private memoryService: Mem0MemoryService,
     private getGeneralSettings: () => GeneralSettings,
   ) {
     this.client = new LLMClient(llmConfig)
@@ -28,7 +25,7 @@ export class Agent {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
     const { requestApproval, abortSignal, onRateLimitRetry } = options
-    const { messages, allowedTools, maxToolCallRounds } = await this.buildConversationRequest(topicId, role, history)
+    const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(role, history)
 
     yield* this.client.chatStream(messages, allowedTools, {
       maxToolCallRounds,
@@ -41,7 +38,7 @@ export class Agent {
   async respond(topicId: string): Promise<string> {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
-    const { messages, allowedTools, maxToolCallRounds } = await this.buildConversationRequest(topicId, role, history)
+    const { messages, allowedTools, maxToolCallRounds } = this.buildConversationRequest(role, history)
 
     const reply = await this.client.chat(messages, allowedTools, maxToolCallRounds)
     return reply
@@ -69,7 +66,7 @@ export class Agent {
   async explainToolIntent(topicId: string, name: string, input: unknown, question?: string): Promise<string> {
     const role = this.getRole()
     const history = this.conversations.listTopicHistory(topicId)
-    const { messages } = await this.buildConversationRequest(topicId, role, history)
+    const { messages } = this.buildConversationRequest(role, history)
     const args = this.safeJsonStringify(input)
     const reviewerQuestion = question?.trim() || '为什么现在需要执行这个操作？'
 
@@ -86,32 +83,7 @@ export class Agent {
     ], [], 1)
   }
 
-  async rememberTopicTurn(topicId: string): Promise<void> {
-    const rows = this.conversations.listTopicMessages(topicId)
-    const assistant = rows.at(-1)
-    const user = this.findLatestUserMessage(rows.slice(0, -1))
-
-    if (!assistant || assistant.role !== 'assistant' || !user?.senderId.trim()) {
-      return
-    }
-
-    await this.memoryService.rememberConversation({
-      userId: this.buildScopedUserId(user.platform, user.senderId),
-      agentId: this.buildAgentId(),
-      runId: `topic:${topicId}`,
-      messages: [
-        { role: 'user', content: user.content },
-        { role: 'assistant', content: assistant.content },
-      ],
-      metadata: {
-        source: user.platform,
-        topicId,
-        botInstanceId: this.botInstanceId,
-      },
-    })
-  }
-
-  private async buildConversationRequest(topicId: string, role: RoleRow, history: ChatMessage[]) {
+  private buildConversationRequest(role: RoleRow, history: ChatMessage[]) {
     const { systemPrompt, maxToolCallRounds, sendTime, timezone } = this.getGeneralSettings()
     const enabledTools = this.parseEnabledTools(role.enabledTools)
     const enabledSkills = this.parseEnabledSkills(role.enabledSkills)
@@ -119,7 +91,6 @@ export class Agent {
     const skillPrompt = this.skillManager.buildPrompt(enabledSkills, this.getLatestUserText(history))
     const toolPrompt = buildToolPrompt(allowedTools)
     const historyWithTime = sendTime ? this.injectSendTime(history, timezone) : history
-    const memoryPrompt = await this.buildMemoryPrompt(topicId, history)
 
     return {
       maxToolCallRounds,
@@ -127,49 +98,11 @@ export class Agent {
       messages: [
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'system' as const, content: role.systemPrompt },
-        ...(memoryPrompt ? [{ role: 'system' as const, content: memoryPrompt }] : []),
         ...(skillPrompt ? [{ role: 'system' as const, content: skillPrompt }] : []),
         ...(toolPrompt ? [{ role: 'system' as const, content: toolPrompt }] : []),
         ...historyWithTime,
       ],
     }
-  }
-
-  private async buildMemoryPrompt(topicId: string, history: ChatMessage[]) {
-    const query = this.getLatestUserText(history).trim()
-    if (!query) {
-      return ''
-    }
-
-    const latestUser = this.findLatestUserMessage(this.conversations.listTopicMessages(topicId))
-    if (!latestUser?.senderId.trim()) {
-      return ''
-    }
-
-    return this.memoryService.buildPromptBlock({
-      query,
-      userId: this.buildScopedUserId(latestUser.platform, latestUser.senderId),
-      agentId: this.buildAgentId(),
-    })
-  }
-
-  private buildScopedUserId(platform: string, senderId: string) {
-    return `${platform}:${senderId.trim()}`
-  }
-
-  private findLatestUserMessage<T extends { role: string }>(messages: T[]) {
-    for (let index = messages.length - 1; index >= 0; index -= 1) {
-      const message = messages[index]
-      if (message?.role === 'user') {
-        return message
-      }
-    }
-
-    return undefined
-  }
-
-  private buildAgentId() {
-    return `bot:${this.botInstanceId}`
   }
 
   private injectSendTime(history: ChatMessage[], timezone: string): ChatMessage[] {
