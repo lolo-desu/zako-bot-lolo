@@ -16,22 +16,18 @@ import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
 import { toConversationMessage, toConversationTopic, toMcpServerProfile } from './serializers.js'
 import { getBotsRoute } from './routes/bots.js'
+import { getConversationsRoute } from './routes/conversations.js'
 import { getRolesRoute } from './routes/roles.js'
 import { getSettingsRoute } from './routes/settings.js'
 import { getSkillsRoute } from './routes/skills.js'
 import { getSystemRoute } from './routes/system.js'
 import {
-  parseCreateConversationTopicInput,
   parseMcpServerInput,
-  parseSendConversationMessageInput,
 } from './validators.js'
 import type {
   ApiResponse,
-  CreateConversationTopicInput,
   McpServerEditorInput,
   McpServerStatus,
-  SendConversationMessageInput,
-  SendConversationMessageResult,
 } from '@zakobot/shared'
 
 export class ApiServer {
@@ -319,98 +315,9 @@ export class ApiServer {
       return this.json(res, botsRoute.body, botsRoute.status)
     }
 
-    if (pathname === '/conversations' && req.method === 'GET') {
-      const botInstanceId = searchParams.get('botInstanceId')?.trim()
-
-      if (!botInstanceId) {
-        return this.json(res, { ok: false, error: 'Bot instance ID is required' }, 400)
-      }
-
-      try {
-        const topics = this.botManager
-          .listConversationTopics(botInstanceId)
-          .map(topic => toConversationTopic(topic))
-
-        return this.json(res, { ok: true, data: topics })
-      }
-      catch (error) {
-        const message = this.errorMessage(error, 'Failed to load conversation topics')
-        const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
-      }
-    }
-
-    if (pathname === '/conversations' && req.method === 'POST') {
-      try {
-        const payload = parseCreateConversationTopicInput(await this.readJson<CreateConversationTopicInput>(req))
-        const topic = this.botManager.startPanelConversation(payload.botInstanceId)
-        return this.json(res, { ok: true, data: toConversationTopic(topic) }, 201)
-      }
-      catch (error) {
-        const message = this.errorMessage(error, 'Failed to create conversation topic')
-        const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
-      }
-    }
-
-    if (pathname === '/conversations/messages' && req.method === 'POST') {
-      try {
-        const payload = parseSendConversationMessageInput(await this.readJson<SendConversationMessageInput>(req))
-        const result = await this.botManager.sendPanelMessage(payload.botInstanceId, payload.content, payload.topicId)
-        const data: SendConversationMessageResult = {
-          topic: toConversationTopic(result.topic),
-          userMessage: toConversationMessage(result.userMessage),
-          assistantMessage: toConversationMessage(result.assistantMessage),
-        }
-
-        return this.json(res, { ok: true, data })
-      }
-      catch (error) {
-        const message = this.errorMessage(error, 'Failed to send conversation message')
-        const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
-      }
-    }
-
-    const conversationMatch = pathname.match(/^\/conversations\/([^/]+)$/)
-    if (conversationMatch && req.method === 'DELETE') {
-      const botInstanceId = searchParams.get('botInstanceId')?.trim()
-
-      if (!botInstanceId) {
-        return this.json(res, { ok: false, error: 'Bot instance ID is required' }, 400)
-      }
-
-      try {
-        const topic = await this.botManager.deleteConversationTopic(botInstanceId, conversationMatch[1])
-        return this.json(res, { ok: true, data: toConversationTopic(topic) })
-      }
-      catch (error) {
-        const message = this.errorMessage(error, 'Failed to delete conversation topic')
-        const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
-      }
-    }
-
-    const conversationMessagesMatch = pathname.match(/^\/conversations\/([^/]+)\/messages$/)
-    if (conversationMessagesMatch && req.method === 'GET') {
-      const botInstanceId = searchParams.get('botInstanceId')?.trim()
-
-      if (!botInstanceId) {
-        return this.json(res, { ok: false, error: 'Bot instance ID is required' }, 400)
-      }
-
-      try {
-        const messages = this.botManager
-          .listConversationMessages(botInstanceId, conversationMessagesMatch[1])
-          .map(message => toConversationMessage(message))
-
-        return this.json(res, { ok: true, data: messages })
-      }
-      catch (error) {
-        const message = this.errorMessage(error, 'Failed to load conversation messages')
-        const status = message.includes('not found') ? 404 : 400
-        return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
-      }
+    const conversationsRoute = await getConversationsRoute(req, pathname, searchParams, this.botManager)
+    if (conversationsRoute) {
+      return this.json(res, conversationsRoute.body, conversationsRoute.status)
     }
 
     return this.json(res, { ok: false, error: 'Not found' }, 404)
