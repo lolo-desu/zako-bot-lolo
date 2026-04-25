@@ -65,7 +65,7 @@ Status: In Progress
 
 - [x] Move memory extraction prompt/parsing out of `Agent`.
 - [x] Move memory ranking/search terms out of `LocalMemoryService` if it grows further.
-- [ ] Add clear logs for memory save/list/delete and background extraction outcomes.
+- [x] Add clear logs for memory save/list/delete and background extraction outcomes.
 - [ ] Add panel visibility for stored memories if needed.
 - [x] Build affected packages.
 - [ ] Commit and deploy.

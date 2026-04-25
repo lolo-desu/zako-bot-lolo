@@ -103,16 +103,18 @@ export class Agent {
 
     const items = await this.extractLongTermMemories(user.content, assistant.content)
     if (items.length === 0) {
+      console.info(`[Memory] Extraction produced no durable memories bot=${this.botInstanceId} topic=${topicId} platform=${user.platform} user=${user.senderId.trim()}`)
       return
     }
 
-    this.localMemoryService.saveMemories({
+    const saved = this.localMemoryService.saveMemories({
       botInstanceId: this.botInstanceId,
       platform: user.platform,
       userId: user.senderId.trim(),
       topicId,
       items,
     })
+    console.info(`[Memory] Extraction completed bot=${this.botInstanceId} topic=${topicId} platform=${user.platform} user=${user.senderId.trim()} extracted=${items.length} saved=${saved}`)
   }
 
   private buildConversationRequest(topicId: string, role: RoleRow, history: ChatMessage[]) {

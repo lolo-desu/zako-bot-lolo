@@ -40,7 +40,9 @@ export class LocalMemoryService {
       return []
     }
 
-    return listLocalMemories(this.db, input, 100)
+    const memories = listLocalMemories(this.db, input, 100)
+    console.info(`[Memory] Listed memories bot=${input.botInstanceId} platform=${input.platform} user=${input.userId} count=${memories.length}`)
+    return memories
   }
 
   shouldWriteback() {
@@ -100,6 +102,9 @@ export class LocalMemoryService {
         sourceTopicId: input.topicId,
       })
     }
+
+    console.info(`[Memory] Saved extracted memories bot=${input.botInstanceId} platform=${input.platform} user=${input.userId} topic=${input.topicId} count=${unique.size}`)
+    return unique.size
   }
 
   saveMemory(input: MemoryScope & { topicId: string; memory: string; kind: string }) {
@@ -116,6 +121,8 @@ export class LocalMemoryService {
       kind: normalizeMemoryKind(input.kind),
       sourceTopicId: input.topicId,
     })
+
+    console.info(`[Memory] Saved memory bot=${input.botInstanceId} platform=${input.platform} user=${input.userId} topic=${input.topicId} kind=${normalizeMemoryKind(input.kind)} chars=${memory.length}`)
   }
 
   deleteMemory(input: MemoryScope & { id: string }) {
@@ -125,7 +132,9 @@ export class LocalMemoryService {
     }
 
     const result = deleteLocalMemory(this.db, input, id)
-    return result.changes > 0
+    const deleted = result.changes > 0
+    console.info(`[Memory] Deleted memory bot=${input.botInstanceId} platform=${input.platform} user=${input.userId} id=${id} deleted=${deleted}`)
+    return deleted
   }
 
   private normalizeMemory(value: string) {
