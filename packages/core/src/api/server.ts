@@ -24,24 +24,17 @@ import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
 import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile, toRoleProfile } from './serializers.js'
+import { getSettingsRoute } from './routes/settings.js'
 import { getSystemRoute } from './routes/system.js'
 import {
   parseBotInput,
-  parseBrowseSettingsInput,
   parseCreateConversationTopicInput,
-  parseGeneralSettingsInput,
-  parseLocalMemorySettingsInput,
   parseMcpServerInput,
   parseRoleInput,
-  parseSearchSettingsInput,
   parseSendConversationMessageInput,
   parseSkillImportInput,
   parseSkillInput,
 } from './validators.js'
-import { getSearchSettings, saveSearchSettings } from '../settings/search-settings.js'
-import { getBrowseSettings, saveBrowseSettings } from '../settings/browse-settings.js'
-import { getGeneralSettings, saveGeneralSettings } from '../settings/general-settings.js'
-import { getLocalMemorySettings, saveLocalMemorySettings } from '../settings/local-memory-settings.js'
 import type {
   ApiResponse,
   BotEditorInput,
@@ -266,60 +259,9 @@ export class ApiServer {
       }
     }
 
-    if (pathname === '/settings/search' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: getSearchSettings(this.db) })
-    }
-
-    if (pathname === '/settings/search' && req.method === 'PUT') {
-      try {
-        const payload = parseSearchSettingsInput(await this.readJson(req))
-        return this.json(res, { ok: true, data: saveSearchSettings(this.db, payload) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (pathname === '/settings/browse' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: getBrowseSettings(this.db) })
-    }
-
-    if (pathname === '/settings/browse' && req.method === 'PUT') {
-      try {
-        const payload = parseBrowseSettingsInput(await this.readJson(req))
-        return this.json(res, { ok: true, data: saveBrowseSettings(this.db, payload) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (pathname === '/settings/general' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: getGeneralSettings(this.db) })
-    }
-
-    if (pathname === '/settings/general' && req.method === 'PUT') {
-      try {
-        const payload = parseGeneralSettingsInput(await this.readJson(req))
-        return this.json(res, { ok: true, data: saveGeneralSettings(this.db, payload) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (pathname === '/settings/memory' && req.method === 'GET') {
-      return this.json(res, { ok: true, data: getLocalMemorySettings(this.db) })
-    }
-
-    if (pathname === '/settings/memory' && req.method === 'PUT') {
-      try {
-        const payload = parseLocalMemorySettingsInput(await this.readJson(req))
-        return this.json(res, { ok: true, data: saveLocalMemorySettings(this.db, payload) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
+    const settingsRoute = await getSettingsRoute(req, pathname, this.db)
+    if (settingsRoute) {
+      return this.json(res, settingsRoute.body, settingsRoute.status)
     }
 
     const mcpServerReconnectMatch = pathname.match(/^\/mcp\/servers\/([^/]+)\/reconnect$/)
