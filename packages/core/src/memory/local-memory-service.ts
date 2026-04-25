@@ -6,6 +6,7 @@ import {
   type DB,
 } from '@zakobot/database'
 import type { LocalMemorySettings } from '@zakobot/shared'
+import { normalizeMemoryKind, selectMemoriesForPrompt } from './local-memory-ranking.js'
 
 type MemoryScope = {
   botInstanceId: string
@@ -60,15 +61,7 @@ export class LocalMemoryService {
       return ''
     }
 
-    const ranked = memories
-      .map(row => ({ row, score: this.scoreMemory(query, row.memory, row.kind, row.updatedAt, row.lastUsedAt) }))
-      .sort((left, right) => right.score - left.score)
-
-    const selected = ranked
-      .filter(item => item.score > 0)
-      .slice(0, settings.maxMemories)
-      .map(item => item.row)
-
+    const selected = selectMemoriesForPrompt(memories, query, settings.maxMemories)
     if (selected.length === 0) {
       return ''
     }
@@ -92,7 +85,7 @@ export class LocalMemoryService {
       if (!unique.has(key)) {
         unique.set(key, {
           memory,
-          kind: this.normalizeKind(item.kind),
+          kind: normalizeMemoryKind(item.kind),
         })
       }
     }
@@ -120,7 +113,7 @@ export class LocalMemoryService {
       platform: input.platform,
       userId: input.userId,
       memory,
-      kind: this.normalizeKind(input.kind),
+      kind: normalizeMemoryKind(input.kind),
       sourceTopicId: input.topicId,
     })
   }
@@ -135,80 +128,6 @@ export class LocalMemoryService {
     return result.changes > 0
   }
 
-  private scoreMemory(
-    query: string,
-    memory: string,
-    kind: string,
-    updatedAt: Date,
-    lastUsedAt: Date,
-  ) {
-    const queryTerms = this.buildSearchTerms(query)
-    const memoryTerms = new Set(this.buildSearchTerms(memory))
-    let score = 0.25
-
-    for (const term of queryTerms) {
-      if (memoryTerms.has(term)) {
-        score += term.length >= 4 ? 2.5 : 1.2
-      }
-    }
-
-    const normalizedQuery = this.normalizeForSearch(query)
-    const normalizedMemory = this.normalizeForSearch(memory)
-    if (normalizedQuery && normalizedMemory) {
-      if (normalizedMemory.includes(normalizedQuery) || normalizedQuery.includes(normalizedMemory)) {
-        score += 3
-      }
-    }
-
-    const kindBonus: Record<string, number> = {
-      preference: 1.2,
-      constraint: 1.4,
-      profile: 1,
-      project: 0.8,
-      fact: 0.5,
-    }
-    score += kindBonus[this.normalizeKind(kind)] ?? 0.5
-
-    score += this.recencyBonus(updatedAt)
-    score += this.recencyBonus(lastUsedAt)
-    return score
-  }
-
-  private recencyBonus(value: Date) {
-    const ageMs = Date.now() - value.getTime()
-    const dayMs = 24 * 60 * 60 * 1000
-
-    if (ageMs <= 3 * dayMs) return 1.2
-    if (ageMs <= 14 * dayMs) return 0.8
-    if (ageMs <= 60 * dayMs) return 0.4
-    return 0.1
-  }
-
-  private buildSearchTerms(value: string) {
-    const normalized = this.normalizeForSearch(value)
-    const terms = new Set<string>()
-
-    for (const word of normalized.split(/\s+/).filter(Boolean)) {
-      terms.add(word)
-    }
-
-    const cjkSegments = normalized.match(/[\p{Script=Han}]{2,}/gu) ?? []
-    for (const segment of cjkSegments) {
-      for (let index = 0; index < segment.length - 1; index += 1) {
-        terms.add(segment.slice(index, index + 2))
-      }
-    }
-
-    return [...terms]
-  }
-
-  private normalizeForSearch(value: string) {
-    return value
-      .toLowerCase()
-      .replace(/[`~!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?！￥…（）【】、；：‘’“”，。？]+/g, ' ')
-      .trim()
-  }
-
   private normalizeMemory(value: string) {
     const normalized = value.replace(/\s+/g, ' ').trim().replace(/[。；，,;]+$/g, '')
     if (normalized.length < 4 || normalized.length > 200) {
@@ -216,12 +135,6 @@ export class LocalMemoryService {
     }
 
     return normalized
-  }
-
-  private normalizeKind(value: string) {
-    return value === 'preference' || value === 'constraint' || value === 'profile' || value === 'project'
-      ? value
-      : 'fact'
   }
 
   private truncate(value: string, maxChars: number) {
