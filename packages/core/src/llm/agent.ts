@@ -6,6 +6,7 @@ import type { RespondStreamOptions } from './respond-stream-options.js'
 import { buildToolPrompt } from './tool-prompt.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
+import { buildMemoryExtractionMessages, parseExtractedMemories } from '../memory/local-memory-extractor.js'
 import { LocalMemoryService } from '../memory/local-memory-service.js'
 import { createLocalMemoryTools } from '../memory/local-memory-tools.js'
 
@@ -175,79 +176,20 @@ export class Agent {
   }
 
   private async extractLongTermMemories(userContent: string, assistantContent: string) {
-    const trimmedUser = this.truncate(userContent.replace(/\s+/g, ' ').trim(), 1500)
-    const trimmedAssistant = this.truncate(assistantContent.replace(/\s+/g, ' ').trim(), 1500)
-
-    if (!trimmedUser || !trimmedAssistant) {
+    const messages = buildMemoryExtractionMessages(userContent, assistantContent)
+    if (messages.length === 0) {
       return []
     }
 
     try {
-      const response = await this.client.chat([
-        {
-          role: 'system',
-          content: '你是长期记忆提炼器。请从这轮对话中只提炼对未来互动稳定有帮助的信息，并返回严格 JSON 数组。每项格式为 {"memory": string, "kind": "preference"|"constraint"|"profile"|"project"|"fact"}。最多返回 3 项。不要输出 markdown，不要解释。不要记录一次性任务、短期状态、敏感信息、密码、token、密钥、验证码，或明显会过期的信息。',
-        },
-        {
-          role: 'user',
-          content: `用户消息：${trimmedUser}\n助手回复：${trimmedAssistant}`,
-        },
-      ], [], 1)
+      const response = await this.client.chat(messages, [], 1)
 
-      return this.parseExtractedMemories(response)
+      return parseExtractedMemories(response)
     }
     catch (error) {
       console.warn('[Memory] Failed to extract local memories:', error)
       return []
     }
-  }
-
-  private parseExtractedMemories(value: string) {
-    const jsonText = this.extractJsonArray(value)
-    if (!jsonText) {
-      return [] as Array<{ memory: string; kind: string }>
-    }
-
-    try {
-      const parsed = JSON.parse(jsonText) as Array<{ memory?: unknown; kind?: unknown }>
-      if (!Array.isArray(parsed)) {
-        return []
-      }
-
-      return parsed
-        .map(item => ({
-          memory: typeof item.memory === 'string' ? item.memory.trim() : '',
-          kind: typeof item.kind === 'string' ? item.kind.trim() : 'fact',
-        }))
-        .filter(item => item.memory)
-        .slice(0, 3)
-    }
-    catch {
-      return []
-    }
-  }
-
-  private extractJsonArray(value: string) {
-    const trimmed = value.trim()
-    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-      return trimmed
-    }
-
-    const blockMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-    if (blockMatch?.[1]) {
-      const block = blockMatch[1].trim()
-      if (block.startsWith('[') && block.endsWith(']')) {
-        return block
-      }
-    }
-
-    const start = trimmed.indexOf('[')
-    const end = trimmed.lastIndexOf(']')
-    if (start !== -1 && end > start) {
-      return trimmed.slice(start, end + 1)
-    }
-
-    return ''
   }
 
   private findLatestUserMessage<T extends { role: string }>(messages: T[]) {
@@ -259,14 +201,6 @@ export class Agent {
     }
 
     return undefined
-  }
-
-  private truncate(value: string, maxChars: number) {
-    if (value.length <= maxChars) {
-      return value
-    }
-
-    return `${value.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`
   }
 
   private injectSendTime(history: ChatMessage[], timezone: string): ChatMessage[] {
