@@ -39,14 +39,14 @@ Status: Completed
 
 ## Phase 3: LLM Client Providers
 
-Status: In progress
+Status: Completed
 
 - [x] Split OpenAI-compatible request/stream logic from `packages/core/src/llm/client.ts`.
 - [x] Split Vertex request/stream logic into a provider module.
 - [x] Extract common tool execution and approval result formatting.
-- [ ] Keep public `LLMClient` behavior unchanged.
-- [ ] Build `@zakobot/core`.
-- [ ] Commit and deploy.
+- [x] Keep public `LLMClient` behavior unchanged.
+- [x] Build `@zakobot/core`.
+- [x] Commit and deploy.
 
 ## Phase 4: Discord Adapter Boundaries
 
