@@ -1,14 +1,9 @@
 import http from 'http'
-import { randomUUID } from 'crypto'
 import {
-  createBot,
   createMcpServer,
-  deleteBot,
   deleteMcpServer,
-  getBotWithRole,
   getMcpServer,
   getRole,
-  listBotsWithRoles,
   listMcpServers,
   updateBot,
   updateMcpServer,
@@ -19,20 +14,19 @@ import type { PluginLoader } from '../plugins/loader.js'
 import type { McpManager } from '../mcp/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, writeJson } from './http.js'
-import { toBotListItem, toBotProfile, toConversationMessage, toConversationTopic, toMcpServerProfile } from './serializers.js'
+import { toConversationMessage, toConversationTopic, toMcpServerProfile } from './serializers.js'
+import { getBotsRoute } from './routes/bots.js'
 import { getRolesRoute } from './routes/roles.js'
 import { getSettingsRoute } from './routes/settings.js'
 import { getSkillsRoute } from './routes/skills.js'
 import { getSystemRoute } from './routes/system.js'
 import {
-  parseBotInput,
   parseCreateConversationTopicInput,
   parseMcpServerInput,
   parseSendConversationMessageInput,
 } from './validators.js'
 import type {
   ApiResponse,
-  BotEditorInput,
   CreateConversationTopicInput,
   McpServerEditorInput,
   McpServerStatus,
@@ -317,11 +311,12 @@ export class ApiServer {
       return this.json(res, rolesRoute.body, rolesRoute.status)
     }
 
-    if (pathname === '/bots' && req.method === 'GET') {
-      return this.json(res, {
-        ok: true,
-        data: listBotsWithRoles(this.db).map(row => toBotListItem(row)),
-      })
+    const botsRoute = await getBotsRoute(req, pathname, {
+      botManager: this.botManager,
+      db: this.db,
+    })
+    if (botsRoute) {
+      return this.json(res, botsRoute.body, botsRoute.status)
     }
 
     if (pathname === '/conversations' && req.method === 'GET') {
@@ -393,123 +388,6 @@ export class ApiServer {
         const message = this.errorMessage(error, 'Failed to delete conversation topic')
         const status = message.includes('not found') ? 404 : 400
         return this.json(res, { ok: false, error: message }, this.errorStatus(error, status))
-      }
-    }
-
-    if (pathname === '/bots' && req.method === 'POST') {
-      try {
-        const payload = parseBotInput(await this.readJson<BotEditorInput>(req))
-
-        if (!getRole(this.db, payload.roleId)) {
-          return this.json(res, { ok: false, error: 'Role not found' }, 404)
-        }
-
-        const now = new Date()
-        const created = createBot(this.db, {
-          id: randomUUID(),
-          name: payload.name,
-          platform: payload.platform,
-          token: payload.token,
-          roleId: payload.roleId,
-          llmProvider: payload.llmProvider,
-          llmPlatformName: payload.llmPlatformName,
-          llmModel: payload.llmModel,
-          llmApiKey: payload.llmApiKey,
-          llmBaseUrl: payload.llmBaseUrl,
-          discordUserId: payload.discordUserId,
-          discordChannelId: payload.discordChannelId,
-          discordGuildId: payload.discordGuildId,
-          enabled: payload.enabled,
-          createdAt: now,
-          updatedAt: now,
-        })
-
-        if (!created) {
-          throw new Error('Failed to create bot')
-        }
-
-        await this.botManager.syncInstance(created.instance.id).catch((error) => {
-          console.error(`[ApiServer] Failed to sync bot "${created.instance.name}":`, error)
-        })
-
-        return this.json(res, { ok: true, data: toBotProfile(created) }, 201)
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    const botMatch = pathname.match(/^\/bots\/([^/]+)$/)
-    if (botMatch && req.method === 'GET') {
-      const bot = getBotWithRole(this.db, botMatch[1])
-
-      if (!bot) {
-        return this.json(res, { ok: false, error: 'Bot not found' }, 404)
-      }
-
-      return this.json(res, { ok: true, data: toBotProfile(bot) })
-    }
-
-    if (botMatch && req.method === 'PUT') {
-      const existing = getBotWithRole(this.db, botMatch[1])
-
-      if (!existing) {
-        return this.json(res, { ok: false, error: 'Bot not found' }, 404)
-      }
-
-      try {
-        const payload = parseBotInput(await this.readJson<BotEditorInput>(req))
-
-        if (!getRole(this.db, payload.roleId)) {
-          return this.json(res, { ok: false, error: 'Role not found' }, 404)
-        }
-
-        const updated = updateBot(this.db, botMatch[1], {
-          name: payload.name,
-          platform: payload.platform,
-          token: payload.token,
-          roleId: payload.roleId,
-          llmProvider: payload.llmProvider,
-          llmPlatformName: payload.llmPlatformName,
-          llmModel: payload.llmModel,
-          llmApiKey: payload.llmApiKey,
-          llmBaseUrl: payload.llmBaseUrl,
-          discordUserId: payload.discordUserId,
-          discordChannelId: payload.discordChannelId,
-          discordGuildId: payload.discordGuildId,
-          enabled: payload.enabled,
-          updatedAt: new Date(),
-        })
-
-        if (!updated) {
-          throw new Error('Failed to update bot')
-        }
-
-        await this.botManager.syncInstance(updated.instance.id).catch((error) => {
-          console.error(`[ApiServer] Failed to sync bot "${updated.instance.name}":`, error)
-        })
-
-        return this.json(res, { ok: true, data: toBotProfile(updated) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Invalid request body')
-      }
-    }
-
-    if (botMatch && req.method === 'DELETE') {
-      const existing = getBotWithRole(this.db, botMatch[1])
-
-      if (!existing) {
-        return this.json(res, { ok: false, error: 'Bot not found' }, 404)
-      }
-
-      try {
-        await this.botManager.stopOne(botMatch[1])
-        deleteBot(this.db, botMatch[1])
-        return this.json(res, { ok: true, data: toBotProfile(existing) })
-      }
-      catch (error) {
-        return this.error(res, error, 'Failed to delete bot')
       }
     }
 

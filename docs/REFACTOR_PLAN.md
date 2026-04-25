@@ -28,7 +28,7 @@ Status: In progress
 - [x] Extract settings routes.
 - [x] Extract skills routes.
 - [x] Extract roles routes.
-- [ ] Extract bots routes.
+- [x] Extract bots routes.
 - [ ] Extract conversations routes.
 - [ ] Extract MCP routes.
 - [x] Extract serializers for bot, role, conversation, MCP profiles.
