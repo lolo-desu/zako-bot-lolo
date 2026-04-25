@@ -50,9 +50,9 @@ Status: Completed
 
 ## Phase 4: Discord Adapter Boundaries
 
-Status: Pending
+Status: In progress
 
-- [ ] Extract slash command registration and handlers.
+- [x] Extract slash command registration and handlers.
 - [ ] Extract approval UI and approval state handling.
 - [ ] Extract thread/session routing helpers.
 - [ ] Keep Discord user-facing behavior unchanged.

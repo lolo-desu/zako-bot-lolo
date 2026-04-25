@@ -14,18 +14,15 @@ import type { BotInstanceRow, RoleRow } from '@zakobot/database'
 import type { AgentEvent, GeneralSettings, ToolApprovalCallback, ToolApprovalDecision } from '@zakobot/shared'
 import type { Agent } from '../llm/agent.js'
 import type { ConversationScope, ConversationService } from '../llm/conversation-service.js'
+import { handleDiscordSlashCommand, MANUAL_BROWSER_COMMAND, NEW_TOPIC_COMMAND, registerDiscordCommands, STOP_COMMAND } from './discord-commands.js'
 import { buildAssistantMessageChunks } from './discord-stream-renderer.js'
 import { DiscordModelCommand, MODEL_COMMAND } from './model-command.js'
 
 const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 const TOOL_APPROVAL_AI_REPLY_TTL_MS = 30 * 1000
-const COMMAND_REGISTRATION_COOLDOWN_MS = 5 * 60 * 1000
 const LLM_RATE_LIMIT_MESSAGE = 'LLM 服务当前过于繁忙，请稍等片刻后重试。'
 const REQUEST_STOPPED_MESSAGE = '请求已停止。'
 const QUEUED_REQUEST_NOTICE = '当前机器人还有其他请求正在处理，已加入队列。可通过 /stop 停止当前频道或话题中的请求。'
-
-const recentCommandRegistrations = new Map<string, number>()
-const pendingCommandRegistrations = new Map<string, Promise<void>>()
 
 type MsgPayload = {
   content: string
@@ -80,21 +77,6 @@ type CreateMessage = (payload: MsgPayload) => Promise<Message>
 type RepliableInteraction = ButtonInteraction | ModalSubmitInteraction | ChatInputCommandInteraction
 
 const MAX_DISCORD_MESSAGE_CHARS = 1900
-
-const NEW_TOPIC_COMMAND = {
-  name: 'new',
-  description: '开启新话题',
-}
-
-const STOP_COMMAND = {
-  name: 'stop',
-  description: '停止当前请求',
-}
-
-const MANUAL_BROWSER_COMMAND = {
-  name: 'browser',
-  description: '手动拉起浏览器和 VNC',
-}
 
 const DEFAULT_MANUAL_BROWSER_URL = 'https://www.google.com'
 
@@ -1320,143 +1302,25 @@ export class DiscordAdapter {
 
     if (!interaction.isChatInputCommand()) return
 
-    try {
-      if (interaction.commandName === STOP_COMMAND.name) {
-        await interaction.reply({
-          content: this.formatStopResult(this.stopScopeRequests(this.buildChannelScope(interaction.channelId, interaction.guildId).scopeKey)),
-          flags: MessageFlags.Ephemeral,
-        })
-        return
-      }
-
-      if (interaction.commandName === MANUAL_BROWSER_COMMAND.name) {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-        await interaction.editReply(await this.startManualBrowser())
-        return
-      }
-
-      if (interaction.commandName === MODEL_COMMAND.name) {
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral })
-        const index = interaction.options.getInteger('index') ?? undefined
-        const replies = typeof index === 'number'
-          ? [await this.modelCommand.switchByIndexReply(index)]
-          : await this.modelCommand.buildListReply()
-        await interaction.editReply(replies[0] ?? '未获取到模型列表。')
-        for (const reply of replies.slice(1)) {
-          await interaction.followUp({ content: reply, flags: MessageFlags.Ephemeral })
-        }
-        return
-      }
-
-      if (interaction.commandName !== NEW_TOPIC_COMMAND.name) return
-
-      const { topic, thread } = await this.createDetachedThreadTopic(
-        interaction.channelId,
-        interaction.guildId,
-        interaction.user.username,
-      )
-
-      await interaction.reply({
-        content: `已开启新话题：${topic.name}\n子区：<#${thread.id}>`,
-        flags: MessageFlags.Ephemeral,
-      })
-    } catch (err) {
-      console.error(`[Discord] Command error in "${this.instance.name}":`, err)
-
-      const errorMessage = interaction.commandName === MANUAL_BROWSER_COMMAND.name
-        ? '拉起手动浏览器失败，请稍后重试。'
-        : interaction.commandName === MODEL_COMMAND.name
-            ? (err instanceof Error ? err.message : '获取或切换模型失败，请稍后重试。')
-            : '开启新话题失败，请稍后重试。'
-
-      if (interaction.deferred && !interaction.replied) {
-        await interaction.editReply(errorMessage).catch(() => {})
-        return
-      }
-
-      if (interaction.replied) {
-        await interaction.followUp({
-          content: errorMessage,
-          flags: MessageFlags.Ephemeral,
-        }).catch(() => {})
-        return
-      }
-
-      await interaction.reply({
-        content: errorMessage,
-        flags: MessageFlags.Ephemeral,
-      }).catch(() => {})
-    }
+    await handleDiscordSlashCommand({
+      createDetachedThreadTopic: (channelId, guildId, username) => this.createDetachedThreadTopic(channelId, guildId, username),
+      instanceName: this.instance.name,
+      interaction,
+      modelCommand: this.modelCommand,
+      startManualBrowser: () => this.startManualBrowser(),
+      stopCurrentScope: (channelId, guildId) => this.formatStopResult(this.stopScopeRequests(this.buildChannelScope(channelId, guildId).scopeKey)),
+    })
   }
 
   private async registerCommands() {
     const application = this.client.application
     if (!application) throw new Error('Discord application is not ready')
 
-    const scopeKey = this.instance.discordGuildId
-      ? `guild:${application.id}:${this.instance.discordGuildId}`
-      : `global:${application.id}`
-    const now = Date.now()
-    const lastRegisteredAt = recentCommandRegistrations.get(scopeKey) ?? 0
-    if (now - lastRegisteredAt < COMMAND_REGISTRATION_COOLDOWN_MS) {
-      return
-    }
-
-    const pending = pendingCommandRegistrations.get(scopeKey)
-    if (pending) {
-      await pending
-      return
-    }
-
-    const registration = this.syncCommands(application, scopeKey)
-    pendingCommandRegistrations.set(scopeKey, registration)
-
-    try {
-      await registration
-    }
-    finally {
-      if (pendingCommandRegistrations.get(scopeKey) === registration) {
-        pendingCommandRegistrations.delete(scopeKey)
-      }
-    }
-  }
-
-  private async syncCommands(application: NonNullable<DiscordAdapter['client']['application']>, scopeKey: string) {
-    const definitions = [NEW_TOPIC_COMMAND, STOP_COMMAND, MANUAL_BROWSER_COMMAND, MODEL_COMMAND]
-
-    if (this.instance.discordGuildId) {
-      const guild = await this.client.guilds.fetch(this.instance.discordGuildId)
-      const existing = await guild.commands.fetch()
-
-      for (const definition of definitions) {
-        const command = existing.find(item => item.name === definition.name)
-        if (command) {
-          await command.edit(definition)
-        }
-        else {
-          await guild.commands.create(definition)
-        }
-      }
-
-      recentCommandRegistrations.set(scopeKey, Date.now())
-      console.log(`[Discord] Registered /${NEW_TOPIC_COMMAND.name}, /${STOP_COMMAND.name}, /${MANUAL_BROWSER_COMMAND.name}, and /${MODEL_COMMAND.name} for guild ${guild.id}`)
-      return
-    }
-
-    const existing = await application.commands.fetch()
-
-    for (const definition of definitions) {
-      const command = existing.find(item => item.name === definition.name)
-      if (command) {
-        await command.edit(definition)
-      }
-      else {
-        await application.commands.create(definition)
-      }
-    }
-
-    recentCommandRegistrations.set(scopeKey, Date.now())
-    console.log(`[Discord] Registered global /${NEW_TOPIC_COMMAND.name}, /${STOP_COMMAND.name}, /${MANUAL_BROWSER_COMMAND.name}, and /${MODEL_COMMAND.name}`)
+    await registerDiscordCommands({
+      application,
+      client: this.client,
+      guildId: this.instance.discordGuildId,
+    })
   }
 
   applyRuntimeUpdate(instance: BotInstanceRow, agent: Agent) {
