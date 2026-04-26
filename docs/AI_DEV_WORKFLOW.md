@@ -6,10 +6,12 @@
 
 - 本地仓库路径：`/root/zako-bot`
 - 当前独立仓库：`https://github.com/lolo-desu/zako-bot-lolo`
+- 当前 runtime skill 源仓库：`https://github.com/lolo-desu/zako-bot-skills`
 - 旧 fork：`https://github.com/lolo-desu/zako-bot`
 - upstream：`https://github.com/Mooooooon/zako-bot`
 - 当前默认分支：`lolover`
 - 当前运行数据目录：`/root/.zakobot`
+- 当前 runtime skill 本地源目录：`/root/zako-bot-skills`
 - 当前 SQLite 数据库：`/root/.zakobot/data.db`
 - 当前 core 状态接口：`http://127.0.0.1:6325/status`
 - 当前 core 文件日志：`/root/.zakobot/logs/core.log`
@@ -50,6 +52,17 @@
 - `packages/core/src/llm/conversation-service.ts`
 - `packages/core/src/llm/list-models.ts`
 
+### Runtime Skills 相关
+
+- `/root/zako-bot-skills/skills/index.json`
+- `/root/zako-bot-skills/skills/*/SKILL.md`
+- `/root/zako-bot-skills/scripts/export-live-skills.mjs`
+- `/root/zako-bot-skills/scripts/sync-to-zakobot.mjs`
+- `/root/zako-bot-skills/scripts/sync-to-zakobot.test.mjs`
+- `packages/core/src/skills/skill-manager.ts`
+- `packages/core/src/api/routes/skills.ts`
+- `packages/core/src/api/routes/roles.ts`
+
 ### 浏览器 / noVNC 相关
 
 - `packages/core/src/mcp/persistent-browser-mcp.ts`
@@ -78,6 +91,8 @@
 - 如果一个功能已经开始变复杂，及时拆模块，不要继续往 `discord-adapter.ts` 之类的大文件里堆。
 - schema、shared type、api payload、panel form、runtime 过滤逻辑经常是联动的，改一处要顺手检查另外几处。
 - 不要随手改用户已经在用的数据，尤其不要清空数据库里的现有配置。
+- 对当前 3 个 ZakoBot runtime skill，优先把 `/root/zako-bot-skills` 视为长期源头，不要默认直接改 live runtime 文件或数据库。
+- `skills/index.json` 不只是目录索引；它也是这 3 个 skill 的角色授权元数据来源。
 
 ## 5. 推荐修改流程
 
@@ -94,6 +109,13 @@
 5. 改完先做针对性 build，不要一上来全量 build。
 6. build 通过后再重启 core。
 7. 最后做最小验证：状态接口、启动日志、关键命令或页面。
+8. 如果改了当前 3 个 runtime skill 的内容或授权，优先在 `/root/zako-bot-skills` 修改并运行同步脚本，再用 `/skills`、`/roles`、`/status` 做 live 验证。
+
+### 当前 runtime skill 同步规则
+
+- `sync-to-zakobot.mjs` 会先读取 registry、skill 文件和 live roles，并先生成完整 role update plan；前置校验没过时不应发出任何 `PUT`
+- 角色匹配优先使用 `roleIds`；如果目标环境里对应 id 不存在，则回退到 `roles` 里的角色名
+- role 更新会保留现有非追踪 skill 与现有工具，只补齐当前被授权 skill 的 `requiredTools`
 
 ## 6. 构建方法
 

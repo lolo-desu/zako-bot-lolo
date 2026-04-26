@@ -8,6 +8,17 @@
 
 ## 当前 fork 新增能力
 
+### Runtime Skills 源仓库
+
+- 当前 3 个 ZakoBot runtime skill 已拆到独立私有仓库：`https://github.com/lolo-desu/zako-bot-skills`
+- live runtime 现在是部署态；长期维护入口是独立仓库里的 `SKILL.md` 与 `skills/index.json`
+- `skills/index.json` 同时保存 skill 元数据、角色授权和 `roleIds` 参考信息
+- 从仓库同步回当前 VPS runtime 使用：`/root/zako-bot-skills/scripts/sync-to-zakobot.mjs`
+- sync 会优先按 `roleIds` 命中 live role；命不中时回退到角色名匹配
+- sync 会在写入前先完成 role update plan 校验，并为已授权 skill 补齐其 `requiredTools`
+- 如需从 live runtime 重新导出当前状态，使用：`/root/zako-bot-skills/scripts/export-live-skills.mjs`
+- 当前独立仓库只跟踪 3 个 runtime skill：`Browser Workflow`、`Current VPS Environment`、`Markdown Table Image Reply`
+
 ### Discord 会话模型
 
 - 使用 `thread = session` 组织 Discord 会话
@@ -74,6 +85,9 @@
 - `packages/panel/pages/chat.vue`
 - `packages/panel/pages/settings/memory/index.vue`
 - `packages/panel/server/api/chat/topics/[id].delete.ts`
+- `/root/zako-bot-skills/skills/index.json`
+- `/root/zako-bot-skills/scripts/export-live-skills.mjs`
+- `/root/zako-bot-skills/scripts/sync-to-zakobot.mjs`
 - `scripts/launch-browser-stack.sh`
 - `scripts/resolve-camoufox-options.py`
 
