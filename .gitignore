@@ -14,3 +14,4 @@ dist/
 packages/panel/.data/
 packages/panel/--host/
 packages/panel/--port/
+.worktrees/
