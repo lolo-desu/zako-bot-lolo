@@ -110,7 +110,7 @@
       <UFormField
         label="技能"
         name="enabledSkills"
-        description="为角色启用工作流、领域知识和输出规范。"
+        description="允许模型在需要时使用这些技能。未勾选的技能对模型不可见。"
       >
         <div class="space-y-3">
           <div v-if="skillsPending && !skills.length" class="space-y-2">
@@ -122,7 +122,7 @@
             v-else-if="skillItems.length"
             v-model="state.enabledSkills"
             title="可用技能"
-            description="启用后会在相关任务中应用"
+            description="勾选后仅表示允许模型按需发现和加载"
             :items="skillItems"
             :disabled="pending"
             empty-text="暂无可用技能。"
@@ -471,7 +471,7 @@ function getSkillDescription(skill: SkillProfile) {
     return '已关闭'
   }
 
-  return skill.description || '已启用的技能会补充角色工作方式。'
+  return skill.description || '允许模型在相关任务中按需发现和加载。'
 }
 
 function getMcpToolDisplayName(serverName: string, toolName: string) {

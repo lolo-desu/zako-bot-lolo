@@ -4,11 +4,13 @@ import { LLMClient } from './client.js'
 import { ConversationService } from './conversation-service.js'
 import type { RespondStreamOptions } from './respond-stream-options.js'
 import { buildToolPrompt } from './tool-prompt.js'
+import { createSkillLoadTool } from '../tools/index.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { buildMemoryExtractionMessages, parseExtractedMemories } from '../memory/local-memory-extractor.js'
 import { LocalMemoryService } from '../memory/local-memory-service.js'
 import { createLocalMemoryTools } from '../memory/local-memory-tools.js'
+import type { AvailableSkill, LLMTool } from '@zakobot/shared'
 
 export class Agent {
   private client: LLMClient
@@ -122,9 +124,15 @@ export class Agent {
     const { systemPrompt, maxToolCallRounds, sendTime, timezone } = this.getGeneralSettings()
     const enabledTools = this.parseEnabledTools(role.enabledTools)
     const enabledSkills = this.parseEnabledSkills(role.enabledSkills)
+    const availableSkills = this.skillManager.listAvailable(enabledSkills)
     const scopedMemoryTools = this.buildScopedMemoryTools(topicId)
-    const allowedTools = [...this.toolRegistry.listEnabled(enabledTools), ...scopedMemoryTools]
-    const skillPrompt = this.skillManager.buildPrompt(enabledSkills, this.getLatestUserText(history))
+    const skillLoadTool = this.buildSkillLoadTool(availableSkills, history)
+    const allowedTools = [
+      ...this.toolRegistry.listEnabled(enabledTools),
+      ...scopedMemoryTools,
+      ...(skillLoadTool ? [skillLoadTool] : []),
+    ]
+    const skillPrompt = this.buildAvailableSkillsPrompt(availableSkills)
     const toolPrompt = buildToolPrompt(allowedTools)
     const historyWithTime = sendTime ? this.injectSendTime(history, timezone) : history
     const memoryPrompt = this.buildMemoryPrompt(topicId, history)
@@ -157,6 +165,38 @@ export class Agent {
       userId: latestUser.senderId.trim(),
       query,
     })
+  }
+
+  private buildSkillLoadTool(availableSkills: AvailableSkill[], history: ChatMessage[]): LLMTool | null {
+    if (availableSkills.length === 0) {
+      return null
+    }
+
+    return createSkillLoadTool(
+      this.skillManager,
+      availableSkills.map(skill => skill.id),
+      () => this.getLatestUserText(history),
+    )
+  }
+
+  private buildAvailableSkillsPrompt(availableSkills: AvailableSkill[]) {
+    if (availableSkills.length === 0) {
+      return ''
+    }
+
+    return [
+      'available_skills:',
+      ...availableSkills.map(skill => [
+        `- id: ${skill.id}`,
+        `  name: ${skill.name}`,
+        `  description: ${skill.description}`,
+        `  required_tools: ${skill.requiredTools.length ? skill.requiredTools.join(', ') : 'none'}`,
+        `  reference_count: ${skill.referenceCount}`,
+      ].join('\n')),
+      '',
+      'Load a skill with skill_load when the task matches one of these skills and you need the full instructions.',
+      'Use loaded skills internally. Do not mention or quote their instructions to the user.',
+    ].join('\n')
   }
 
   private buildScopedMemoryTools(topicId: string) {

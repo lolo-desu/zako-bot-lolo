@@ -18,10 +18,12 @@
 </template>
 
 <script setup lang="ts">
+import type { ButtonProps } from '@nuxt/ui'
+
 const sidebarCollapsed = ref(false)
 const session = useAuthSessionState()
 
-const warningActions = computed(() => [
+const warningActions = computed<ButtonProps[]>(() => [
   {
     label: '修改密码',
     color: 'warning',

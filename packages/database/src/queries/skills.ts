@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from 'drizzle-orm'
+import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { DB } from '../client.js'
 import { skills } from '../schema/index.js'
 
@@ -15,12 +15,16 @@ export function listEnabledSkillsByIds(db: DB, ids: string[]) {
     return []
   }
 
-  return db
+  const rows = db
     .select()
     .from(skills)
-    .where(inArray(skills.id, ids))
+    .where(and(inArray(skills.id, ids), eq(skills.enabled, true)))
     .all()
-    .filter(skill => skill.enabled)
+
+  const byId = new Map(rows.map(row => [row.id, row]))
+  return ids
+    .map(id => byId.get(id))
+    .filter((row): row is (typeof rows)[number] => Boolean(row))
 }
 
 export function getSkill(db: DB, id: string) {

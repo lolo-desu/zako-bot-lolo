@@ -43,7 +43,7 @@
                 <USwitch
                   :model-value="p.enabled"
                   size="xs"
-                  @update:model-value="togglePlatformEnabled(p.id); $event.stopPropagation()"
+                  @update:model-value="togglePlatformEnabled(p.id)"
                   @click.stop
                 />
                 <span class="truncate text-sm">{{ p.name }}</span>

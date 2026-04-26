@@ -575,6 +575,7 @@ export class DiscordAdapter {
           break
         case 'tool_call': {
           if (toolProcessMode === 'none') break
+          if (!this.shouldTrackToolProgress(event.name)) break
           const displayId = assignToolDisplayId(event.callId)
           const summary = this.buildToolActionSummary(event.name, event.input)
           toolCallSummaries.set(event.callId, summary)
@@ -591,6 +592,7 @@ export class DiscordAdapter {
           if (event.ok && event.artifacts?.length) {
             outputArtifacts.push(...event.artifacts)
           }
+          if (!this.shouldTrackToolProgress(event.name)) break
           if (toolProcessMode === 'full') {
             this.throwIfStopped(abortSignal)
             await setToolLog(this.formatToolResult({ ...event, callId: getToolDisplayId(event.callId) }, toolCallSummaries.get(event.callId)))
@@ -902,6 +904,10 @@ export class DiscordAdapter {
     return `调用工具 ${this.inlineCode(name)}`
   }
 
+  private shouldTrackToolProgress(name: string) {
+    return !this.isInternalTool(name)
+  }
+
   private formatToolError(result: string) {
     const parsed = this.parseJsonObject(result)
     const message = this.pickToolField(parsed, ['error', 'message', 'detail'])
@@ -1036,6 +1042,10 @@ export class DiscordAdapter {
   }
 
   private shouldRequireApproval(name: string, input: unknown, mode: GeneralSettings['toolApprovalMode']) {
+    if (this.isInternalTool(name)) {
+      return false
+    }
+
     if (mode === 'all' && !this.isShellLikeTool(name)) {
       return true
     }
@@ -1053,6 +1063,10 @@ export class DiscordAdapter {
     }
 
     return this.agent.isToolSensitive(name)
+  }
+
+  private isInternalTool(name: string) {
+    return name === 'skill_load'
   }
 
   private buildApprovalFingerprint(name: string, input: unknown) {

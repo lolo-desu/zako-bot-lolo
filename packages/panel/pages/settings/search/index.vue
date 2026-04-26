@@ -148,7 +148,7 @@ const { data, pending, error, refresh } = await useFetch<{ ok: true, data: Searc
 
 const activeSection = ref<SearchSection>('general')
 const activeSectionMeta = computed(() =>
-  sections.find(item => item.value === activeSection.value) ?? sections[0],
+  sections.find(item => item.value === activeSection.value) ?? sections[0]!,
 )
 
 const form = reactive<SearchSettings>({

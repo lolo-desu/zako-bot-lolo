@@ -20,6 +20,10 @@ export interface SkillReferenceInfo {
   size: number
 }
 
+export interface LoadedSkillReference extends SkillReferenceInfo {
+  content: string
+}
+
 export interface SkillProfile {
   id: string
   name: string
@@ -38,4 +42,21 @@ export interface SkillProfile {
 export interface SkillContent {
   content: string
   references: SkillReferenceInfo[]
+}
+
+export interface AvailableSkill {
+  id: string
+  name: string
+  description: string
+  requiredTools: string[]
+  referenceCount: number
+}
+
+export interface LoadedSkill {
+  id: string
+  name: string
+  description: string
+  requiredTools: string[]
+  content: string
+  references: LoadedSkillReference[]
 }
