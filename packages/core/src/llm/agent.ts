@@ -4,13 +4,16 @@ import { LLMClient } from './client.js'
 import { ConversationService } from './conversation-service.js'
 import type { RespondStreamOptions } from './respond-stream-options.js'
 import { buildToolPrompt } from './tool-prompt.js'
-import { createSkillLoadTool } from '../tools/index.js'
+import { createSkillCreateTool, createSkillListMineTool, createSkillLoadTool, createSkillUpdateTool } from '../tools/index.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { buildMemoryExtractionMessages, parseExtractedMemories } from '../memory/local-memory-extractor.js'
+import { buildMemoryReviewMessages, parseReviewedMemories } from '../memory/local-memory-reviewer.js'
 import { LocalMemoryService } from '../memory/local-memory-service.js'
 import { createLocalMemoryTools } from '../memory/local-memory-tools.js'
 import type { AvailableSkill, LLMTool } from '@zakobot/shared'
+
+const MEMORY_REVIEW_WINDOW = 12
 
 export class Agent {
   private client: LLMClient
@@ -120,18 +123,72 @@ export class Agent {
     console.info(`[Memory] Extraction completed bot=${this.botInstanceId} topic=${topicId} platform=${user.platform} user=${user.senderId.trim()} extracted=${items.length} saved=${saved}`)
   }
 
+  async reviewTopicMemories(topicId: string): Promise<void> {
+    if (!this.localMemoryService.shouldWriteback()) {
+      return
+    }
+
+    const rows = this.conversations.listTopicMessages(topicId)
+    const reviewTarget = this.findLatestMemoryReviewTarget(rows)
+    const userId = reviewTarget?.user.senderId.trim()
+    if (!reviewTarget || !userId) {
+      return
+    }
+
+    const scope = {
+      botInstanceId: this.botInstanceId,
+      platform: reviewTarget.user.platform,
+      userId,
+    }
+
+    try {
+      const messages = buildMemoryReviewMessages(
+        this.buildRecentTopicWindow(rows, reviewTarget.assistantIndex, userId),
+        this.localMemoryService.listMemoryTexts(scope),
+      )
+      if (messages.length === 0) {
+        return
+      }
+
+      const response = await this.client.chat(messages, [], 1)
+      const { items, malformed } = parseReviewedMemories(response)
+      if (malformed) {
+        console.warn(`[Memory] Review returned malformed output bot=${this.botInstanceId} topic=${topicId} platform=${reviewTarget.user.platform} user=${userId}`)
+        return
+      }
+
+      if (items.length === 0) {
+        console.info(`[Memory] Review produced no durable memories bot=${this.botInstanceId} topic=${topicId} platform=${reviewTarget.user.platform} user=${userId}`)
+        return
+      }
+
+      const saved = this.localMemoryService.saveMemories({
+        ...scope,
+        topicId,
+        items,
+      })
+      console.info(`[Memory] Review completed bot=${this.botInstanceId} topic=${topicId} platform=${reviewTarget.user.platform} user=${userId} reviewed=${items.length} saved=${saved}`)
+    }
+    catch (error) {
+      console.warn('[Memory] Failed to review local memories:', error)
+    }
+  }
+
   private buildConversationRequest(topicId: string, role: RoleRow, history: ChatMessage[]) {
     const { systemPrompt, maxToolCallRounds, sendTime, timezone } = this.getGeneralSettings()
     const enabledTools = this.parseEnabledTools(role.enabledTools)
     const enabledSkills = this.parseEnabledSkills(role.enabledSkills)
-    const availableSkills = this.skillManager.listAvailable(enabledSkills)
+    const availableSkills = this.skillManager.listAvailableForBot({ roleSkillIds: enabledSkills, botInstanceId: this.botInstanceId })
     const scopedMemoryTools = this.buildScopedMemoryTools(topicId)
+    const localSkillTools = this.buildLocalSkillTools(enabledTools)
     const skillLoadTool = this.buildSkillLoadTool(availableSkills, history)
     const allowedTools = [
       ...this.toolRegistry.listEnabled(enabledTools),
       ...scopedMemoryTools,
+      ...localSkillTools,
       ...(skillLoadTool ? [skillLoadTool] : []),
     ]
+    const skillReusePrompt = this.buildSkillReusePrompt()
     const skillPrompt = this.buildAvailableSkillsPrompt(availableSkills)
     const toolPrompt = buildToolPrompt(allowedTools)
     const historyWithTime = sendTime ? this.injectSendTime(history, timezone) : history
@@ -144,6 +201,7 @@ export class Agent {
         ...(systemPrompt ? [{ role: 'system' as const, content: systemPrompt }] : []),
         { role: 'system' as const, content: role.systemPrompt },
         ...(memoryPrompt ? [{ role: 'system' as const, content: memoryPrompt }] : []),
+        ...(skillReusePrompt ? [{ role: 'system' as const, content: skillReusePrompt }] : []),
         ...(skillPrompt ? [{ role: 'system' as const, content: skillPrompt }] : []),
         ...(toolPrompt ? [{ role: 'system' as const, content: toolPrompt }] : []),
         ...historyWithTime,
@@ -199,6 +257,23 @@ export class Agent {
     ].join('\n')
   }
 
+  private buildSkillReusePrompt() {
+    return [
+      'Before creating a new bot-local skill, check skill_list_mine for an existing reusable workflow to reuse or update.',
+      'Save only stable reusable instructions and workflows that should help this bot again later.',
+      'Do not save secrets, temporary output, one-off tasks, or temporary status.',
+      'When you discover a reusable workflow that should help this bot again later, save reusable workflows as bot-local skills with skill_create or refine them with skill_update.',
+    ].join('\n')
+  }
+
+  private buildLocalSkillTools(enabledTools: string[]) {
+    return [
+      createSkillListMineTool(this.skillManager, this.botInstanceId),
+      createSkillCreateTool(this.skillManager, this.botInstanceId, enabledTools),
+      createSkillUpdateTool(this.skillManager, this.botInstanceId, enabledTools),
+    ]
+  }
+
   private buildScopedMemoryTools(topicId: string) {
     if (!this.localMemoryService.isEnabled()) {
       return []
@@ -246,6 +321,44 @@ export class Agent {
     return undefined
   }
 
+  private findLatestMemoryReviewTarget<T extends { role: string; senderId?: string }>(messages: T[]) {
+    for (let assistantIndex = messages.length - 1; assistantIndex >= 0; assistantIndex -= 1) {
+      const assistant = messages[assistantIndex]
+      if (assistant?.role !== 'assistant') {
+        continue
+      }
+
+      for (let userIndex = assistantIndex - 1; userIndex >= 0; userIndex -= 1) {
+        const user = messages[userIndex]
+        if (user?.role === 'user' && user.senderId?.trim()) {
+          return { assistantIndex, user }
+        }
+      }
+    }
+
+    return undefined
+  }
+
+  private buildRecentTopicWindow(messages: Array<{ role: string; content: string; senderId?: string }>, assistantIndex: number, userId: string): ChatMessage[] {
+    let activeUserId = ''
+
+    return messages
+      .slice(0, assistantIndex + 1)
+      .filter((message) => {
+        if (message.role === 'user') {
+          activeUserId = message.senderId?.trim() ?? ''
+          return activeUserId === userId
+        }
+
+        return message.role === 'assistant' && activeUserId === userId
+      })
+      .slice(-MEMORY_REVIEW_WINDOW)
+      .map(message => ({
+        role: message.role as 'user' | 'assistant',
+        content: message.content,
+      }))
+  }
+
   private injectSendTime(history: ChatMessage[], timezone: string): ChatMessage[] {
     const lastUserIndex = history.map(m => m.role).lastIndexOf('user')
     if (lastUserIndex === -1) return history
@@ -273,7 +386,10 @@ export class Agent {
 
   isToolSensitive(name: string): boolean {
     const enabledTools = this.parseEnabledTools(this.getRole().enabledTools)
-    return this.toolRegistry.listEnabled(enabledTools).find(t => t.name === name)?.sensitive === true
+    return [
+      ...this.toolRegistry.listEnabled(enabledTools),
+      ...this.buildLocalSkillTools(enabledTools),
+    ].find(tool => tool.name === name)?.sensitive === true
   }
 
   private parseEnabledTools(value: string): string[] {

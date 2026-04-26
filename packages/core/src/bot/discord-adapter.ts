@@ -14,6 +14,7 @@ import type { Agent } from '../llm/agent.js'
 import type { ConversationScope, ConversationService } from '../llm/conversation-service.js'
 import { handleApprovalInteraction, type PendingApproval, replyEphemeral, type RepliableInteraction } from './discord-approval-interactions.js'
 import { handleDiscordSlashCommand, registerDiscordCommands } from './discord-commands.js'
+import { runPostReplyHooks } from './post-reply-hooks.js'
 import { buildAssistantMessageChunks } from './discord-stream-renderer.js'
 import {
   buildChannelScope,
@@ -1363,7 +1364,7 @@ export class DiscordAdapter {
       senderId: this.client.user?.id ?? '',
       senderName: this.client.user?.username ?? this.instance.name,
     })
-    void this.agent.rememberTopicTurn(topicId)
+    runPostReplyHooks(this.agent, topicId)
   }
 
   private async withTypingIndicator<T>(

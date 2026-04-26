@@ -1,0 +1,1 @@
+ALTER TABLE `skills` ADD `owner_bot_instance_id` text;

@@ -8,6 +8,7 @@ import {
   deleteSkill,
   getSkill,
   getSkillBySlug,
+  listEnabledAgentSkillsByOwner,
   listEnabledSkillsByIds,
   listSkills,
   updateSkill,
@@ -67,8 +68,17 @@ export class SkillManager {
     }
   }
 
-  listAvailable(skillIds: string[]): AvailableSkill[] {
-    return listEnabledSkillsByIds(this.db, this.normalizeStringList(skillIds)).map(row => this.toAvailableSkill(row))
+  listAvailable(skillIds: string[], ownerBotInstanceId?: string): AvailableSkill[] {
+    const rows = [
+      ...listEnabledSkillsByIds(this.db, this.normalizeStringList(skillIds)),
+      ...(ownerBotInstanceId ? listEnabledAgentSkillsByOwner(this.db, ownerBotInstanceId) : []),
+    ]
+
+    return Array.from(new Map(rows.map(row => [row.id, row])).values()).map(row => this.toAvailableSkill(row))
+  }
+
+  listAvailableForBot(input: { roleSkillIds: string[], botInstanceId: string }): AvailableSkill[] {
+    return this.listAvailable(input.roleSkillIds, input.botInstanceId)
   }
 
   loadAuthorized(skillIds: string[], skillId: string, userText: string): LoadedSkill {
@@ -119,6 +129,39 @@ export class SkillManager {
     return this.toProfile(created!)
   }
 
+  createAgentAuthored(botInstanceId: string, enabledTools: string[], input: SkillEditorInput): SkillProfile {
+    const parsed = this.parseMarkdown(input.content)
+    const id = randomUUID()
+    const name = input.name.trim() || parsed.name
+    const now = new Date()
+    const packageDir = join(this.rootDir, id)
+    const requiredTools = this.normalizeRequiredTools(input.requiredTools.length ? input.requiredTools : parsed.requiredTools)
+
+    this.validateAgentAuthoredPromptContent(parsed.content)
+    this.validateRequiredTools(requiredTools, enabledTools)
+
+    mkdirSync(packageDir, { recursive: true })
+    writeFileSync(join(packageDir, ENTRY_FILE), this.normalizeMarkdownContent(input.content), 'utf8')
+
+    const created = createSkill(this.db, {
+      id,
+      name,
+      slug: this.createUniqueSlug(name),
+      description: input.description.trim() || parsed.description,
+      version: parsed.version,
+      sourceType: 'agent_authored',
+      ownerBotInstanceId: botInstanceId,
+      entryFile: ENTRY_FILE,
+      packageDir,
+      enabled: true,
+      requiredTools: JSON.stringify(requiredTools),
+      createdAt: now,
+      updatedAt: now,
+    })
+
+    return this.toProfile(created!)
+  }
+
   import(input: SkillImportInput): SkillProfile {
     const buffer = Buffer.from(input.contentBase64, 'base64')
     const sourceType = this.detectSourceType(input.fileName, input.sourceType)
@@ -153,6 +196,30 @@ export class SkillManager {
       version: parsed.version,
       enabled: input.enabled,
       requiredTools: JSON.stringify(this.normalizeStringList(input.requiredTools)),
+      updatedAt: new Date(),
+    })
+
+    return this.toProfile(updated!)
+  }
+
+  updateAgentAuthored(botInstanceId: string, skillId: string, enabledTools: string[], input: SkillEditorInput): SkillProfile {
+    const existing = this.requireOwnedAgentAuthoredSkill(botInstanceId, skillId)
+    const parsed = this.parseMarkdown(input.content)
+    const name = input.name.trim() || parsed.name
+    const requiredTools = this.normalizeRequiredTools(input.requiredTools)
+
+    this.validateAgentAuthoredPromptContent(parsed.content)
+    this.validateRequiredTools(requiredTools, enabledTools)
+
+    mkdirSync(existing.packageDir, { recursive: true })
+    writeFileSync(join(existing.packageDir, existing.entryFile), this.normalizeMarkdownContent(input.content), 'utf8')
+
+    const updated = updateSkill(this.db, skillId, {
+      name,
+      description: input.description.trim() || parsed.description,
+      version: parsed.version,
+      enabled: true,
+      requiredTools: JSON.stringify(requiredTools),
       updatedAt: new Date(),
     })
 
@@ -433,6 +500,16 @@ export class SkillManager {
     return row
   }
 
+  private requireOwnedAgentAuthoredSkill(botInstanceId: string, skillId: string) {
+    const row = this.requireSkill(skillId)
+
+    if (row.sourceType !== 'agent_authored' || row.ownerBotInstanceId !== botInstanceId) {
+      throw new Error('Skill is not available for this bot')
+    }
+
+    return row
+  }
+
   private toProfile(row: SkillRow): SkillProfile {
     return {
       id: row.id,
@@ -441,6 +518,7 @@ export class SkillManager {
       description: row.description,
       version: row.version,
       sourceType: row.sourceType as SkillSourceType,
+      ownerBotInstanceId: row.ownerBotInstanceId,
       entryFile: row.entryFile,
       enabled: row.enabled,
       requiredTools: this.parseStringList(row.requiredTools),
@@ -577,6 +655,24 @@ export class SkillManager {
     }
 
     return this.normalizeStringList(trimmed.split(',').map(item => item.trim()))
+  }
+
+  private normalizeRequiredTools(requiredTools: string[]) {
+    return this.normalizeStringList(requiredTools)
+  }
+
+  private validateAgentAuthoredPromptContent(content: string) {
+    if (content.trim().length > MAX_SKILL_PROMPT_CHARS) {
+      throw new Error('Skill content exceeds the runtime prompt limit')
+    }
+  }
+
+  private validateRequiredTools(requiredTools: string[], enabledTools: string[]) {
+    const allowedTools = new Set(this.normalizeStringList(enabledTools))
+
+    if (requiredTools.some(tool => !allowedTools.has(tool))) {
+      throw new Error('Required tools must be enabled for the current role')
+    }
   }
 
   private normalizeStringList(value: unknown[]) {
