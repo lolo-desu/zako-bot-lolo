@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'path'
 import AdmZip from 'adm-zip'
+import { parse as parseYaml } from 'yaml'
 import {
   createSkill,
   deleteSkill,
@@ -12,7 +13,17 @@ import {
   updateSkill,
 } from '@zakobot/database'
 import type { DB, SkillRow } from '@zakobot/database'
-import type { SkillContent, SkillEditorInput, SkillImportInput, SkillProfile, SkillReferenceInfo, SkillSourceType } from '@zakobot/shared'
+import type {
+  AvailableSkill,
+  LoadedSkill,
+  LoadedSkillReference,
+  SkillContent,
+  SkillEditorInput,
+  SkillImportInput,
+  SkillProfile,
+  SkillReferenceInfo,
+  SkillSourceType,
+} from '@zakobot/shared'
 
 interface ParsedSkillMarkdown {
   content: string
@@ -20,12 +31,6 @@ interface ParsedSkillMarkdown {
   description: string
   version: string
   requiredTools: string[]
-}
-
-interface SkillPrompt {
-  profile: SkillProfile
-  content: string
-  references: Array<SkillReferenceInfo & { content: string }>
 }
 
 const ENTRY_FILE = 'SKILL.md'
@@ -60,6 +65,30 @@ export class SkillManager {
       content: this.readEntry(row),
       references: this.listReferences(row),
     }
+  }
+
+  listAvailable(skillIds: string[]): AvailableSkill[] {
+    return listEnabledSkillsByIds(this.db, this.normalizeStringList(skillIds)).map(row => this.toAvailableSkill(row))
+  }
+
+  loadAuthorized(skillIds: string[], skillId: string, userText: string): LoadedSkill {
+    const authorizedSkillIds = this.normalizeStringList(skillIds)
+
+    if (!authorizedSkillIds.includes(skillId)) {
+      throw new Error('Skill is not available for this role')
+    }
+
+    const row = this.requireSkill(skillId)
+    if (!row.enabled) {
+      throw new Error('Skill is disabled')
+    }
+
+    const loadedSkill = this.toLoadedSkill(row, userText)
+    if (!loadedSkill) {
+      throw new Error('Failed to load skill')
+    }
+
+    return loadedSkill
   }
 
   create(input: SkillEditorInput): SkillProfile {
@@ -123,7 +152,7 @@ export class SkillManager {
       description: input.description.trim() || parsed.description,
       version: parsed.version,
       enabled: input.enabled,
-      requiredTools: JSON.stringify(this.normalizeStringList(input.requiredTools.length ? input.requiredTools : parsed.requiredTools)),
+      requiredTools: JSON.stringify(this.normalizeStringList(input.requiredTools)),
       updatedAt: new Date(),
     })
 
@@ -138,10 +167,9 @@ export class SkillManager {
   }
 
   buildPrompt(skillIds: string[], userText: string): string {
-    const skills = listEnabledSkillsByIds(this.db, this.normalizeStringList(skillIds))
-    const prompts = skills
-      .map(row => this.toPrompt(row, userText))
-      .filter((prompt): prompt is SkillPrompt => Boolean(prompt))
+    const prompts = listEnabledSkillsByIds(this.db, this.normalizeStringList(skillIds))
+      .map(row => this.toLoadedSkill(row, userText))
+      .filter((prompt): prompt is LoadedSkill => Boolean(prompt))
 
     if (!prompts.length) {
       return ''
@@ -149,9 +177,9 @@ export class SkillManager {
 
     const sections = prompts.map((prompt) => {
       const header = [
-        `技能：${prompt.profile.name}`,
-        prompt.profile.description ? `说明：${prompt.profile.description}` : '',
-        prompt.profile.requiredTools.length ? `依赖工具：${prompt.profile.requiredTools.join('、')}` : '',
+        `技能：${prompt.name}`,
+        prompt.description ? `说明：${prompt.description}` : '',
+        prompt.requiredTools.length ? `依赖工具：${prompt.requiredTools.join('、')}` : '',
         '内容：',
         prompt.content,
       ].filter(Boolean)
@@ -281,12 +309,15 @@ export class SkillManager {
     return this.toProfile(created!)
   }
 
-  private toPrompt(row: SkillRow, userText: string): SkillPrompt | undefined {
+  private toLoadedSkill(row: SkillRow, userText: string): LoadedSkill | undefined {
     try {
       const content = this.stripFrontmatter(this.readEntry(row)).trim()
       const references = this.selectReferences(row, content, userText)
       return {
-        profile: this.toProfile(row),
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        requiredTools: this.parseStringList(row.requiredTools),
         content: this.truncate(content, MAX_SKILL_PROMPT_CHARS),
         references,
       }
@@ -300,7 +331,7 @@ export class SkillManager {
   private selectReferences(row: SkillRow, skillContent: string, userText: string) {
     const references = this.listReferences(row)
     const normalizedUserText = userText.toLowerCase()
-    const selected: Array<SkillReferenceInfo & { content: string }> = []
+    const selected: LoadedSkillReference[] = []
     let total = 0
 
     for (const ref of references) {
@@ -419,16 +450,27 @@ export class SkillManager {
     }
   }
 
+  private toAvailableSkill(row: SkillRow): AvailableSkill {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      requiredTools: this.parseStringList(row.requiredTools),
+      referenceCount: this.listReferences(row).length,
+    }
+  }
+
   private parseMarkdown(content: string): ParsedSkillMarkdown {
-    const { frontmatter, body } = this.extractFrontmatter(content)
-    const name = this.getFrontmatterValue(frontmatter, 'name') || this.findTitle(body) || '未命名技能'
-    const description = this.getFrontmatterValue(frontmatter, 'description') || this.findDescription(body)
-    const version = this.getFrontmatterValue(frontmatter, 'version') || '1.0.0'
+    const normalizedContent = this.normalizeMarkdownContent(content)
+    const { frontmatter, body } = this.splitFrontmatter(normalizedContent)
+    const metadata = this.parseFrontmatter(frontmatter)
+    const name = this.getFrontmatterString(metadata, 'name') || this.findTitle(body) || '未命名技能'
+    const description = this.getFrontmatterString(metadata, 'description') || this.findDescription(body)
+    const version = this.getFrontmatterString(metadata, 'version') || '1.0.0'
     const requiredTools = this.parseStringList(
-      this.getFrontmatterValue(frontmatter, 'requiredTools')
-      || this.getFrontmatterValue(frontmatter, 'required_tools')
-      || this.getFrontmatterValue(frontmatter, 'tools')
-      || '[]',
+      metadata.requiredTools
+      ?? metadata.required_tools
+      ?? metadata.tools,
     )
 
     return {
@@ -440,14 +482,14 @@ export class SkillManager {
     }
   }
 
-  private extractFrontmatter(content: string) {
+  private splitFrontmatter(content: string) {
     if (!content.startsWith('---')) {
       return { frontmatter: '', body: content }
     }
 
     const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
     if (!match) {
-      return { frontmatter: '', body: content }
+      throw new Error('Invalid skill frontmatter')
     }
 
     return {
@@ -457,19 +499,42 @@ export class SkillManager {
   }
 
   private stripFrontmatter(content: string) {
-    return this.extractFrontmatter(content).body
+    return this.splitFrontmatter(this.normalizeMarkdownContent(content)).body
   }
 
-  private getFrontmatterValue(frontmatter: string, key: string) {
-    const line = frontmatter
-      .split(/\r?\n/)
-      .find(item => item.trim().startsWith(`${key}:`))
-
-    if (!line) {
-      return ''
+  private parseFrontmatter(frontmatter: string): Record<string, unknown> {
+    if (!frontmatter.trim()) {
+      return {}
     }
 
-    return line.slice(line.indexOf(':') + 1).trim().replace(/^["']|["']$/g, '')
+    let parsed: unknown
+
+    try {
+      parsed = parseYaml(frontmatter)
+    }
+    catch (error) {
+      throw new Error('Invalid skill frontmatter', { cause: error })
+    }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Invalid skill frontmatter')
+    }
+
+    return parsed as Record<string, unknown>
+  }
+
+  private getFrontmatterString(frontmatter: Record<string, unknown>, key: string) {
+    const value = frontmatter[key]
+
+    if (typeof value === 'string') {
+      return value.trim()
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value)
+    }
+
+    return ''
   }
 
   private findTitle(content: string) {
@@ -487,7 +552,15 @@ export class SkillManager {
       .find(line => line && !line.startsWith('#')) ?? ''
   }
 
-  private parseStringList(value: string) {
+  private parseStringList(value: unknown) {
+    if (Array.isArray(value)) {
+      return this.normalizeStringList(value)
+    }
+
+    if (typeof value !== 'string') {
+      return []
+    }
+
     const trimmed = value.trim()
     if (!trimmed) {
       return []

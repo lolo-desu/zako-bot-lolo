@@ -229,7 +229,7 @@ const { data, pending, error, refresh } = await useFetch<{ ok: true, data: Brows
 
 const activeSection = ref<BrowseSection>('general')
 const activeSectionMeta = computed(() =>
-  sections.find(item => item.value === activeSection.value) ?? sections[0],
+  sections.find(item => item.value === activeSection.value) ?? sections[0]!,
 )
 
 const form = reactive<BrowseSettings>({

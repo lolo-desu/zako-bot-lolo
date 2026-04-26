@@ -10,7 +10,9 @@
   },
   "type": "module",
   "main": "./.output/server/index.mjs",
-  "files": [".output"],
+  "files": [
+    ".output"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -31,6 +33,7 @@
     "nuxt": "^4.4.2",
     "shiki": "^4.0.2",
     "tailwindcss": "^4.2.2",
-    "typescript": "^5.7.3"
+    "typescript": "^5.7.3",
+    "vue-tsc": "^3.2.7"
   }
 }

@@ -3,11 +3,13 @@ import { createWebSearchTool } from './builtins/web-search.js'
 import { createShellExecTool } from './builtins/shell-exec.js'
 import { createFileReadTool, createFileWriteTool, createFileEditTool, createFileListTool } from './builtins/file-tools.js'
 import { createMarkdownTableImageTool } from './builtins/markdown-table-image.js'
+import { createSkillLoadTool } from './builtins/skill-load.js'
 import { ToolRegistry } from './registry.js'
 import type { BrowseSettings } from '@zakobot/shared'
 import type { SearchSettings } from '@zakobot/shared'
 
 export { ToolRegistry } from './registry.js'
+export { createSkillLoadTool } from './builtins/skill-load.js'
 
 export function createDefaultToolRegistry(
   getSearchSettings: () => SearchSettings,

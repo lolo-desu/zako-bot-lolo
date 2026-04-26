@@ -31,9 +31,16 @@
 </template>
 
 <script setup lang="ts">
+import type { TabsItem } from '@nuxt/ui'
+
 const route = useRoute()
 
-const settingItems = [
+type SettingsTab = TabsItem & {
+  to: string
+  match: string
+}
+
+const settingItems: SettingsTab[] = [
   {
     label: '通用设置',
     icon: 'i-heroicons-adjustments-horizontal-20-solid',
@@ -90,10 +97,10 @@ const settingItems = [
     to: '/settings/password',
     match: '/settings/password',
   },
-] as const
+]
 
 const activeTab = computed(() =>
-  settingItems.find(item => route.path.startsWith(item.match))?.value ?? settingItems[0].value,
+  settingItems.find(item => route.path.startsWith(item.match))?.value ?? settingItems[0]!.value,
 )
 
 async function handleTabChange(value: string | number) {

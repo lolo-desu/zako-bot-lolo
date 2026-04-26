@@ -9,7 +9,7 @@
                 技能
               </h2>
               <p class="mt-1 text-xs text-[var(--text-secondary)]">
-                管理角色可用的工作流
+                管理角色可授权模型按需使用的工作流
               </p>
             </div>
 
@@ -21,7 +21,7 @@
                 color="neutral"
                 aria-label="刷新"
                 :loading="pending"
-                @click="refresh"
+                @click="handleRefresh"
               />
               <UButton
                 icon="i-heroicons-plus-20-solid"
@@ -277,6 +277,7 @@
 </template>
 
 <script setup lang="ts">
+import type { ButtonProps } from '@nuxt/ui'
 import type { SkillContent, SkillEditorInput, SkillImportInput, SkillProfile } from '@zakobot/shared'
 
 const toast = useToast()
@@ -304,14 +305,18 @@ const skills = computed(() => data.value?.data ?? [])
 const selectedSkill = computed(() =>
   selectedId.value ? skills.value.find(skill => skill.id === selectedId.value) ?? null : null,
 )
-const errorMessage = computed(() => error.value?.data?.message ?? error.value?.message ?? '')
+const errorMessage = computed(() => getRequestErrorMessage(error.value, ''))
 const canSave = computed(() => form.content.trim().length > 0 && !saving.value && !contentLoading.value)
-const deleteConfirmActions = computed(() => [
+const deleteConfirmActions = computed<ButtonProps[]>(() => [
   {
     label: '确认删除',
     color: 'error' as const,
     loading: saving.value,
-    onClick: () => deleteTarget.value && deleteSkill(deleteTarget.value),
+    onClick: () => {
+      if (deleteTarget.value) {
+        return deleteSkill(deleteTarget.value)
+      }
+    },
   },
   {
     label: '取消',
@@ -322,6 +327,10 @@ const deleteConfirmActions = computed(() => [
     },
   },
 ])
+
+function handleRefresh() {
+  void refresh()
+}
 
 watch(uploadFile, (file) => {
   if (!file) {
@@ -388,7 +397,7 @@ async function loadSkill(skill: SkillProfile) {
     references.value = response.data.references
   }
   catch (err: any) {
-    toast.add({ title: err?.data?.message ?? err?.message ?? '技能内容加载失败', color: 'error' })
+    toast.add({ title: getRequestErrorMessage(err, '技能内容加载失败'), color: 'error' })
   }
   finally {
     contentLoading.value = false
@@ -414,7 +423,7 @@ async function saveSkill() {
     toast.add({ title: `已保存「${response.data.name}」`, color: 'success' })
   }
   catch (err: any) {
-    toast.add({ title: err?.data?.message ?? err?.message ?? '技能保存失败', color: 'error' })
+    toast.add({ title: getRequestErrorMessage(err, '技能保存失败'), color: 'error' })
   }
   finally {
     saving.value = false
@@ -441,7 +450,7 @@ async function importSkill(file: File) {
     toast.add({ title: `已导入「${response.data.name}」`, color: 'success' })
   }
   catch (err: any) {
-    toast.add({ title: err?.data?.message ?? err?.message ?? '技能导入失败', color: 'error' })
+    toast.add({ title: getRequestErrorMessage(err, '技能导入失败'), color: 'error' })
   }
   finally {
     uploading.value = false
@@ -460,7 +469,7 @@ async function deleteSkill(skill: SkillProfile) {
     toast.add({ title: `已删除「${skill.name}」`, color: 'success' })
   }
   catch (err: any) {
-    toast.add({ title: err?.data?.message ?? err?.message ?? '技能删除失败', color: 'error' })
+    toast.add({ title: getRequestErrorMessage(err, '技能删除失败'), color: 'error' })
   }
   finally {
     saving.value = false
@@ -478,6 +487,10 @@ function toPayload(): SkillEditorInput {
       .map(item => item.trim())
       .filter(Boolean),
   }
+}
+
+function getRequestErrorMessage(error: any, fallback: string) {
+  return error?.data?.error ?? error?.data?.message ?? error?.message ?? fallback
 }
 
 async function fileToBase64(file: File) {
