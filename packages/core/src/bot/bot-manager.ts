@@ -9,6 +9,7 @@ import type {
 import { getEnabledBots, getBotWithRole, getRole, updateBot } from '@zakobot/database'
 import type { GeneralSettings, LocalMemorySettings } from '@zakobot/shared'
 import { DiscordAdapter } from './discord-adapter.js'
+import { runPostReplyHooks } from './post-reply-hooks.js'
 import { Agent } from '../llm/agent.js'
 import { ConversationService } from '../llm/conversation-service.js'
 import { fetchAvailableModels } from '../llm/list-models.js'
@@ -172,7 +173,7 @@ export class BotManager {
       },
     })!
 
-    void agent.rememberTopicTurn(topic.id)
+    runPostReplyHooks(agent, topic.id)
 
     return {
       topic: this.conversations.getTopic(topic.id)!,

@@ -24,7 +24,22 @@ export function listEnabledSkillsByIds(db: DB, ids: string[]) {
   const byId = new Map(rows.map(row => [row.id, row]))
   return ids
     .map(id => byId.get(id))
-    .filter((row): row is (typeof rows)[number] => Boolean(row))
+      .filter((row): row is (typeof rows)[number] => Boolean(row))
+}
+
+export function listEnabledAgentSkillsByOwner(db: DB, botInstanceId: string) {
+  return db
+    .select()
+    .from(skills)
+    .where(
+      and(
+        eq(skills.enabled, true),
+        eq(skills.sourceType, 'agent_authored'),
+        eq(skills.ownerBotInstanceId, botInstanceId),
+      ),
+    )
+    .orderBy(asc(skills.createdAt))
+    .all()
 }
 
 export function getSkill(db: DB, id: string) {

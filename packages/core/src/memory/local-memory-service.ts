@@ -45,6 +45,12 @@ export class LocalMemoryService {
     return memories
   }
 
+  listMemoryTexts(input: MemoryScope, limit = 20) {
+    return this.listMemories(input)
+      .slice(0, limit)
+      .map(item => item.memory)
+  }
+
   shouldWriteback() {
     const settings = this.getSettings()
     return settings.enabled && settings.writebackEnabled

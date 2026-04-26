@@ -1,4 +1,4 @@
-export type SkillSourceType = 'md' | 'zip' | 'manual'
+export type SkillSourceType = 'md' | 'zip' | 'manual' | 'agent_authored'
 
 export interface SkillEditorInput {
   name: string
@@ -31,6 +31,7 @@ export interface SkillProfile {
   description: string
   version: string
   sourceType: SkillSourceType
+  ownerBotInstanceId: string | null
   entryFile: string
   enabled: boolean
   requiredTools: string[]
