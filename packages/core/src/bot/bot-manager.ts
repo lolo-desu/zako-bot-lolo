@@ -4,9 +4,10 @@ import type {
   ConversationTopicRow,
   DB,
   BotInstanceRow,
+  LlmProviderRow,
   RoleRow,
 } from '@zakobot/database'
-import { getEnabledBots, getBotWithRole, getLlmProvider, getRole, updateBot } from '@zakobot/database'
+import { getEnabledBots, getBotWithRole, getLlmProvider, getRole, listLlmProviders, updateBot } from '@zakobot/database'
 import type { GeneralSettings, LocalMemorySettings } from '@zakobot/shared'
 import { hasTask4BridgeRuntimeConfig, isTask4BridgeCompatibleProviderFormat } from '@zakobot/shared'
 import { DiscordAdapter } from './discord-adapter.js'
@@ -212,6 +213,8 @@ export class BotManager {
       this.conversations,
       this.getGeneralSettings,
       () => this.getCurrentProviderName(row.instance.id),
+      async () => this.listSwitchableProviders(row.instance.id),
+      (index) => this.switchProvider(row.instance.id, index),
       () => this.listAvailableModels(row.instance.id),
       (modelId) => this.setModel(row.instance.id, modelId),
     )
@@ -293,6 +296,62 @@ export class BotManager {
     return updated.instance.llmModel
   }
 
+  listSwitchableProviders(instanceId: string) {
+    const row = this.requireBotRow(instanceId)
+
+    return listLlmProviders(this.db)
+      .filter(provider => this.isSwitchableProvider(provider))
+      .map(provider => ({
+        id: provider.id,
+        name: provider.name,
+        models: this.parseStringArray(provider.enabledModels),
+        current: provider.id === row.instance.llmProviderId,
+      }))
+  }
+
+  async switchProvider(instanceId: string, index: number) {
+    if (!Number.isInteger(index) || index <= 0) {
+      throw new Error('提供商编号必须是大于 0 的整数。先运行 /provider 查看编号。')
+    }
+
+    const providers = this.listSwitchableProviders(instanceId)
+    const target = providers[index - 1]
+    if (!target) {
+      throw new Error(`提供商编号 ${index} 不存在。先运行 /provider 查看可用编号。`)
+    }
+
+    const provider = getLlmProvider(this.db, target.id)
+    if (!provider || !this.isSwitchableProvider(provider)) {
+      throw new Error('Selected LLM provider is not available for runtime switching')
+    }
+
+    const row = this.requireBotRow(instanceId)
+    if (row.instance.llmProviderId === provider.id) {
+      return { name: provider.name, changed: false }
+    }
+
+    const nextModel = target.models[0]
+    const updated = updateBot(this.db, instanceId, {
+      llmProviderId: provider.id,
+      llmPlatformName: provider.name,
+      llmModel: nextModel,
+      llmApiKey: provider.apiKey,
+      llmBaseUrl: provider.baseUrl,
+      updatedAt: new Date(),
+    })
+
+    if (!updated) {
+      throw new Error('Failed to update bot provider')
+    }
+
+    const adapter = this.adapters.get(instanceId)
+    if (adapter) {
+      adapter.applyRuntimeUpdate(updated.instance, this.createAgent(updated))
+    }
+
+    return { name: provider.name, changed: true }
+  }
+
   private createAgent(row: { instance: BotInstanceRow; role: RoleRow }) {
     const roleId = row.role.id
     const fallbackRole = row.role
@@ -334,6 +393,13 @@ export class BotManager {
   private getCurrentProviderName(instanceId: string) {
     const row = this.requireBotRow(instanceId)
     return this.requireBoundProvider(row.instance)?.name ?? (row.instance.llmPlatformName?.trim() || undefined)
+  }
+
+  private isSwitchableProvider(provider: LlmProviderRow) {
+    return provider.enabled
+      && isTask4BridgeCompatibleProviderFormat(provider.format)
+      && hasTask4BridgeRuntimeConfig(provider)
+      && this.parseStringArray(provider.enabledModels).length > 0
   }
 
   private requireBoundProvider(instance: BotInstanceRow) {
