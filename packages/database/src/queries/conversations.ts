@@ -35,11 +35,42 @@ export function getConversationTopic(db: DB, topicId: string) {
     .get()
 }
 
+export function getConversationTopicByScope(
+  db: DB,
+  botInstanceId: string,
+  platform: string,
+  scopeKey: string,
+) {
+  return db
+    .select()
+    .from(conversationTopics)
+    .where(and(
+      eq(conversationTopics.botInstanceId, botInstanceId),
+      eq(conversationTopics.platform, platform),
+      eq(conversationTopics.scopeKey, scopeKey),
+      eq(conversationTopics.status, 'active'),
+    ))
+    .orderBy(desc(conversationTopics.createdAt))
+    .get()
+}
+
 export function listConversationTopics(db: DB, botInstanceId: string) {
   return db
     .select()
     .from(conversationTopics)
     .where(eq(conversationTopics.botInstanceId, botInstanceId))
+    .orderBy(desc(conversationTopics.updatedAt), desc(conversationTopics.createdAt))
+    .all()
+}
+
+export function listConversationTopicsBySourceType(db: DB, botInstanceId: string, sourceType: string) {
+  return db
+    .select()
+    .from(conversationTopics)
+    .where(and(
+      eq(conversationTopics.botInstanceId, botInstanceId),
+      eq(conversationTopics.sourceType, sourceType),
+    ))
     .orderBy(desc(conversationTopics.updatedAt), desc(conversationTopics.createdAt))
     .all()
 }

@@ -26,6 +26,13 @@ import {
   type SendableChannel,
 } from './discord-thread-topics.js'
 import { DiscordModelCommand, MODEL_COMMAND } from './model-command.js'
+import { DiscordProviderCommand } from './provider-command.js'
+import {
+  DISCORD_ORPHAN_TOPIC_CLEANUP_INTERVAL_MS,
+  DISCORD_THREAD_SOURCE_TYPE,
+  runDiscordOrphanTopicCleanup,
+  runDiscordOrphanTopicCleanupSafely,
+} from './discord-orphan-topic-cleanup.js'
 
 const TOOL_APPROVAL_TIMEOUT_MS = 5 * 60 * 1000
 const TOOL_APPROVAL_AI_REPLY_TTL_MS = 30 * 1000
@@ -85,6 +92,8 @@ export class DiscordAdapter {
   private processingQueue = false
   private requestCounter = 0
   private modelCommand: DiscordModelCommand
+  private providerCommand: DiscordProviderCommand
+  private orphanTopicCleanupTimer?: ReturnType<typeof setInterval>
 
   constructor(
     readonly instance: BotInstanceRow,
@@ -93,6 +102,8 @@ export class DiscordAdapter {
     private conversations: ConversationService,
     private getGeneralSettings: () => GeneralSettings,
     private getCurrentProviderName: () => string | undefined,
+    private listAvailableProviders: () => Promise<Array<{ id: string; name: string; current: boolean }>>,
+    private switchProvider: (index: number) => Promise<{ name: string; changed: boolean }>,
     private listAvailableModels: () => Promise<string[]>,
     private setModel: (modelId: string) => Promise<string>,
     ) {
@@ -139,6 +150,11 @@ export class DiscordAdapter {
       getCurrentProviderName: () => this.getCurrentProviderName(),
       listAvailableModels: this.listAvailableModels,
       setModel: this.setModel,
+    })
+    this.providerCommand = new DiscordProviderCommand({
+      getCurrentProviderName: () => this.getCurrentProviderName() ?? '未绑定提供商',
+      listAvailableProviders: this.listAvailableProviders,
+      switchProviderByIndex: this.switchProvider,
     })
   }
 
@@ -1230,12 +1246,33 @@ export class DiscordAdapter {
 
     await handleDiscordSlashCommand({
       createDetachedThreadTopic: (channelId, guildId, username) => createDetachedThreadTopic(this.getThreadTopicDeps(), channelId, guildId, username),
+      deleteCurrentThreadTopic: () => this.deleteCurrentInteractionThread(interaction),
       instanceName: this.instance.name,
       interaction,
       modelCommand: this.modelCommand,
+      providerCommand: this.providerCommand,
       startManualBrowser: () => this.startManualBrowser(),
       stopCurrentScope: (channelId, guildId) => this.formatStopResult(this.stopScopeRequests(buildChannelScope(this.instance.platform, channelId, guildId).scopeKey)),
     })
+  }
+
+  private async deleteCurrentInteractionThread(interaction: Interaction & { channelId: string }) {
+    if (!interaction.channel?.isThread()) {
+      throw new Error('`/del` 只能在子区中使用。')
+    }
+
+    const topic = this.conversations.getTopicByScope(
+      this.instance.id,
+      this.instance.platform,
+      `discord:${interaction.channelId}`,
+    )
+    if (!topic) {
+      throw new Error('当前子区没有绑定可删除的会话。')
+    }
+
+    await this.deleteConversationThread(topic, this.parseJsonRecord(topic.metadata))
+    this.conversations.deleteTopic(topic.id)
+    return '已删除当前会话和子区。'
   }
 
   private async registerCommands() {
@@ -1420,9 +1457,14 @@ export class DiscordAdapter {
 
   async start() {
     await this.client.login(this.instance.token)
+    this.startOrphanTopicCleanupLoop()
   }
 
   async stop() {
+    if (this.orphanTopicCleanupTimer) {
+      clearInterval(this.orphanTopicCleanupTimer)
+      this.orphanTopicCleanupTimer = undefined
+    }
     this.client.destroy()
     console.log(`[Discord] "${this.instance.name}" disconnected.`)
   }
@@ -1433,5 +1475,53 @@ export class DiscordAdapter {
       throw new Error(`Channel ${channelId} is not a sendable text channel`)
     }
     await channel.send(content)
+  }
+
+  private startOrphanTopicCleanupLoop() {
+    void runDiscordOrphanTopicCleanupSafely(
+      () => this.runOrphanTopicCleanup(),
+      (message, error) => console.error(message, error),
+    )
+    this.orphanTopicCleanupTimer = setInterval(() => {
+      void runDiscordOrphanTopicCleanupSafely(
+        () => this.runOrphanTopicCleanup(),
+        (message, error) => console.error(message, error),
+      )
+    }, DISCORD_ORPHAN_TOPIC_CLEANUP_INTERVAL_MS)
+  }
+
+  private async runOrphanTopicCleanup() {
+    await runDiscordOrphanTopicCleanup({
+      listDiscordThreadTopics: () => this.conversations.listTopicsBySourceType(this.instance.id, DISCORD_THREAD_SOURCE_TYPE),
+      isThreadMissing: async (threadId) => {
+        try {
+          const channel = await this.client.channels.fetch(threadId)
+          return !channel || !channel.isThread()
+        }
+        catch (error) {
+          if (isUnknownDiscordThreadError(error)) {
+            return true
+          }
+
+          throw error
+        }
+      },
+      deleteTopic: async (topicId) => {
+        this.conversations.deleteTopic(topicId)
+      },
+      onTopicError: (topicId, error) => {
+        console.error(`[Discord] Orphan topic cleanup failed for topic ${topicId}:`, error)
+      },
+    })
+  }
+
+  private parseJsonRecord(value: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(value) as Record<string, unknown>
+      return parsed && typeof parsed === 'object' ? parsed : {}
+    }
+    catch {
+      return {}
+    }
   }
 }

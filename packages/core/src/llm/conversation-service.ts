@@ -2,8 +2,10 @@ import {
   appendConversationMessage,
   deleteConversationTopicById,
   getConversationTopic,
+  getConversationTopicByScope,
   getActiveConversationTopic,
   listConversationTopics,
+  listConversationTopicsBySourceType,
   listConversationMessages,
   startConversationTopic,
   type ConversationMessageRow,
@@ -69,12 +71,20 @@ export class ConversationService {
     return getConversationTopic(this.db, topicId)
   }
 
+  getTopicByScope(botInstanceId: string, platform: string, scopeKey: string) {
+    return getConversationTopicByScope(this.db, botInstanceId, platform, scopeKey)
+  }
+
   deleteTopic(topicId: string) {
     return deleteConversationTopicById(this.db, topicId)
   }
 
   listTopics(botInstanceId: string) {
     return listConversationTopics(this.db, botInstanceId)
+  }
+
+  listTopicsBySourceType(botInstanceId: string, sourceType: string) {
+    return listConversationTopicsBySourceType(this.db, botInstanceId, sourceType)
   }
 
   listTopicHistory(topicId: string): ChatMessage[] {

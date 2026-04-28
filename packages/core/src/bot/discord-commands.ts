@@ -1,6 +1,7 @@
 import { MessageFlags } from 'discord.js'
 import type { ChatInputCommandInteraction, Client } from 'discord.js'
 import { DiscordModelCommand, MODEL_COMMAND } from './model-command.js'
+import { DiscordProviderCommand, PROVIDER_COMMAND } from './provider-command.js'
 
 const COMMAND_REGISTRATION_COOLDOWN_MS = 5 * 60 * 1000
 
@@ -22,6 +23,11 @@ export const MANUAL_BROWSER_COMMAND = {
   description: '手动拉起浏览器和 VNC',
 }
 
+export const DELETE_TOPIC_COMMAND = {
+  name: 'del',
+  description: '删除当前会话和子区',
+}
+
 type RegisterDiscordCommandsOptions = {
   application: NonNullable<Client['application']>
   client: Client
@@ -35,9 +41,11 @@ type DetachedThreadTopic = {
 
 type HandleSlashCommandOptions = {
   createDetachedThreadTopic: (channelId: string, guildId: string | null, username: string) => Promise<DetachedThreadTopic>
+  deleteCurrentThreadTopic: () => Promise<string>
   instanceName: string
   interaction: ChatInputCommandInteraction
   modelCommand: DiscordModelCommand
+  providerCommand: DiscordProviderCommand
   startManualBrowser: () => Promise<string>
   stopCurrentScope: (channelId: string, guildId: string | null) => string
 }
@@ -73,9 +81,11 @@ export async function registerDiscordCommands({ application, client, guildId }: 
 
 export async function handleDiscordSlashCommand({
   createDetachedThreadTopic,
+  deleteCurrentThreadTopic,
   instanceName,
   interaction,
   modelCommand,
+  providerCommand,
   startManualBrowser,
   stopCurrentScope,
 }: HandleSlashCommandOptions): Promise<boolean> {
@@ -107,6 +117,27 @@ export async function handleDiscordSlashCommand({
       return true
     }
 
+    if (interaction.commandName === PROVIDER_COMMAND.name) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral })
+      const index = interaction.options.getInteger('index') ?? undefined
+      const replies = typeof index === 'number'
+        ? [await providerCommand.switchByIndexReply(index)]
+        : await providerCommand.buildListReply()
+      await interaction.editReply(replies[0] ?? '未获取到提供商列表。')
+      for (const reply of replies.slice(1)) {
+        await interaction.followUp({ content: reply, flags: MessageFlags.Ephemeral })
+      }
+      return true
+    }
+
+    if (interaction.commandName === DELETE_TOPIC_COMMAND.name) {
+      await interaction.reply({
+        content: await deleteCurrentThreadTopic(),
+        flags: MessageFlags.Ephemeral,
+      })
+      return true
+    }
+
     if (interaction.commandName !== NEW_TOPIC_COMMAND.name) {
       return false
     }
@@ -130,6 +161,10 @@ export async function handleDiscordSlashCommand({
       ? '拉起手动浏览器失败，请稍后重试。'
       : interaction.commandName === MODEL_COMMAND.name
           ? (error instanceof Error ? error.message : '获取或切换模型失败，请稍后重试。')
+          : interaction.commandName === PROVIDER_COMMAND.name
+              ? (error instanceof Error ? error.message : '获取或切换提供商失败，请稍后重试。')
+              : interaction.commandName === DELETE_TOPIC_COMMAND.name
+                  ? (error instanceof Error ? error.message : '删除当前会话失败，请稍后重试。')
           : '开启新话题失败，请稍后重试。'
 
     if (interaction.deferred && !interaction.replied) {
@@ -159,7 +194,7 @@ async function syncCommands({
   guildId,
   scopeKey,
 }: RegisterDiscordCommandsOptions & { scopeKey: string }): Promise<void> {
-  const definitions = [NEW_TOPIC_COMMAND, STOP_COMMAND, MANUAL_BROWSER_COMMAND, MODEL_COMMAND]
+  const definitions = [NEW_TOPIC_COMMAND, STOP_COMMAND, MANUAL_BROWSER_COMMAND, MODEL_COMMAND, PROVIDER_COMMAND, DELETE_TOPIC_COMMAND]
 
   if (guildId) {
     const guild = await client.guilds.fetch(guildId)
@@ -176,7 +211,7 @@ async function syncCommands({
     }
 
     recentCommandRegistrations.set(scopeKey, Date.now())
-    console.log(`[Discord] Registered /${NEW_TOPIC_COMMAND.name}, /${STOP_COMMAND.name}, /${MANUAL_BROWSER_COMMAND.name}, and /${MODEL_COMMAND.name} for guild ${guild.id}`)
+    console.log(`[Discord] Registered /${NEW_TOPIC_COMMAND.name}, /${STOP_COMMAND.name}, /${MANUAL_BROWSER_COMMAND.name}, /${MODEL_COMMAND.name}, /${PROVIDER_COMMAND.name}, and /${DELETE_TOPIC_COMMAND.name} for guild ${guild.id}`)
     return
   }
 
@@ -193,5 +228,5 @@ async function syncCommands({
   }
 
   recentCommandRegistrations.set(scopeKey, Date.now())
-  console.log(`[Discord] Registered global /${NEW_TOPIC_COMMAND.name}, /${STOP_COMMAND.name}, /${MANUAL_BROWSER_COMMAND.name}, and /${MODEL_COMMAND.name}`)
+  console.log(`[Discord] Registered global /${NEW_TOPIC_COMMAND.name}, /${STOP_COMMAND.name}, /${MANUAL_BROWSER_COMMAND.name}, /${MODEL_COMMAND.name}, /${PROVIDER_COMMAND.name}, and /${DELETE_TOPIC_COMMAND.name}`)
 }
