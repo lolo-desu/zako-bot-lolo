@@ -10,7 +10,7 @@ type ModelListConfig = Pick<LLMConfig, 'apiKey' | 'baseUrl'> & {
   platformName?: string
 }
 
-type ModelListFormat = 'openai' | 'google' | 'vertex'
+export type ModelListFormat = 'openai' | 'google' | 'vertex'
 
 function parseServiceAccount(apiKey: string) {
   try {
@@ -25,7 +25,7 @@ function parseServiceAccount(apiKey: string) {
   }
 }
 
-function detectFormat(config: ModelListConfig): ModelListFormat {
+export function detectModelListFormat(config: ModelListConfig): ModelListFormat {
   const baseUrl = config.baseUrl?.toLowerCase() ?? ''
   const platformName = config.platformName?.toLowerCase() ?? ''
 
@@ -41,7 +41,7 @@ function detectFormat(config: ModelListConfig): ModelListFormat {
 }
 
 async function fetchOpenAIModels(baseUrl: string, apiKey: string) {
-  const url = new URL('/v1/models', baseUrl)
+  const url = buildModelListUrl(baseUrl, 'v1')
   const response = await fetch(url.toString(), {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -60,7 +60,7 @@ async function fetchOpenAIModels(baseUrl: string, apiKey: string) {
 }
 
 async function fetchGoogleModels(baseUrl: string, apiKey: string) {
-  const url = new URL('/v1beta/models', baseUrl)
+  const url = buildModelListUrl(baseUrl, 'v1beta')
   url.searchParams.set('key', apiKey)
   url.searchParams.set('pageSize', '100')
 
@@ -80,6 +80,18 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string) {
     .sort((a, b) => a.localeCompare(b))
 }
 
+function buildModelListUrl(baseUrl: string, versionSegment: 'v1' | 'v1beta') {
+  const url = new URL(baseUrl)
+  const basePath = url.pathname.replace(/\/+$/, '')
+
+  url.pathname = (basePath.endsWith(`/${versionSegment}`)
+    ? `${basePath}/models`
+    : `${basePath}/${versionSegment}/models`
+  ).replace(/\/+/g, '/')
+
+  return url
+}
+
 export async function fetchAvailableModels(config: ModelListConfig) {
   if (!config.baseUrl?.trim()) {
     throw new Error('当前 bot 未配置模型 base URL。')
@@ -89,7 +101,7 @@ export async function fetchAvailableModels(config: ModelListConfig) {
     throw new Error('当前 bot 未配置模型 API Key。')
   }
 
-  const format = detectFormat(config)
+  const format = detectModelListFormat(config)
   if (format === 'vertex') {
     throw new Error('当前模型平台暂不支持拉取模型列表（Vertex AI）。')
   }

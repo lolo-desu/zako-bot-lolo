@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core'
+import { llmProviders } from './llm-providers.js'
 import { roles } from './roles.js'
 
 export const botInstances = sqliteTable('bot_instances', {
@@ -7,6 +8,7 @@ export const botInstances = sqliteTable('bot_instances', {
   platform: text('platform', { enum: ['discord', 'qq'] }).notNull(),
   token: text('token').notNull(),
   llmProvider: text('llm_provider').notNull().default('openai'),
+  llmProviderId: text('llm_provider_id').references(() => llmProviders.id, { onDelete: 'set null' }),
   llmPlatformName: text('llm_platform_name').notNull().default(''),
   llmModel: text('llm_model').notNull().default(''),
   llmApiKey: text('llm_api_key').notNull().default(''),

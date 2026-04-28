@@ -13,6 +13,7 @@ import { getGeneralSettings } from './settings/general-settings.js'
 import { getLocalMemorySettings } from './settings/local-memory-settings.js'
 import { ensureDirectory, getMcpWorkdir, getSkillsRoot, getZakobotHome, resolveZakobotPath } from './runtime/paths.js'
 import { initFileConsoleLogging } from './runtime/logger.js'
+import { migrateLegacyBotProviders } from './llm/provider-migration.js'
 
 const zakobotHome = ensureDirectory(getZakobotHome())
 const mcpWorkdir = ensureDirectory(getMcpWorkdir(zakobotHome))
@@ -28,6 +29,7 @@ let shuttingDown = false
 
 async function main() {
   seed(db)
+  migrateLegacyBotProviders(db)
 
   const toolRegistry = createDefaultToolRegistry(
     () => getSearchSettings(db),

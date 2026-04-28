@@ -1,6 +1,7 @@
 import { asc, eq } from 'drizzle-orm'
 import type { DB } from '../client.js'
 import { botInstances, roles } from '../schema/index.js'
+import type { NewBotInstanceRow } from '../schema/bot-instances.js'
 
 export function listBotsWithRoles(db: DB) {
   return db
@@ -28,6 +29,22 @@ export function getBot(db: DB, instanceId: string) {
     .get()
 }
 
+export function getBotByLlmProviderId(db: DB, llmProviderId: string) {
+  return db
+    .select()
+    .from(botInstances)
+    .where(eq(botInstances.llmProviderId, llmProviderId))
+    .get()
+}
+
+export function listBotsByLlmProviderId(db: DB, llmProviderId: string) {
+  return db
+    .select()
+    .from(botInstances)
+    .where(eq(botInstances.llmProviderId, llmProviderId))
+    .all()
+}
+
 export function getBotWithRole(db: DB, instanceId: string) {
   return db
     .select({ instance: botInstances, role: roles })
@@ -37,12 +54,12 @@ export function getBotWithRole(db: DB, instanceId: string) {
     .get()
 }
 
-export function createBot(db: DB, values: typeof botInstances.$inferInsert) {
+export function createBot(db: DB, values: NewBotInstanceRow) {
   db.insert(botInstances).values(values).run()
   return getBotWithRole(db, values.id)
 }
 
-export function updateBot(db: DB, id: string, values: Partial<typeof botInstances.$inferInsert>) {
+export function updateBot(db: DB, id: string, values: Partial<NewBotInstanceRow>) {
   db
     .update(botInstances)
     .set(values)
@@ -50,6 +67,14 @@ export function updateBot(db: DB, id: string, values: Partial<typeof botInstance
     .run()
 
   return getBotWithRole(db, id)
+}
+
+export function updateBotsByLlmProviderId(db: DB, llmProviderId: string, values: Partial<NewBotInstanceRow>) {
+  return db
+    .update(botInstances)
+    .set(values)
+    .where(eq(botInstances.llmProviderId, llmProviderId))
+    .run()
 }
 
 export function deleteBot(db: DB, id: string) {

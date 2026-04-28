@@ -7,6 +7,7 @@ export function createDefaultBotEditorInput(): BotEditorInput {
     token: '',
     roleId: '',
     llmProvider: 'openai',
+    llmProviderId: '',
     llmPlatformName: '',
     llmModel: '',
     llmApiKey: '',
@@ -26,6 +27,7 @@ export function normalizeBotEditorInput(body: Partial<BotEditorInput>, options: 
     token: body.token?.trim() ?? '',
     roleId: body.roleId?.trim() ?? '',
     llmProvider: 'openai',
+    llmProviderId: body.llmProviderId?.trim() ?? '',
     llmPlatformName: body.llmPlatformName?.trim() ?? '',
     llmModel: body.llmModel?.trim() ?? '',
     llmApiKey: body.llmApiKey?.trim() ?? '',
@@ -37,16 +39,24 @@ export function normalizeBotEditorInput(body: Partial<BotEditorInput>, options: 
   }
 }
 
-export function getBotEditorInputError(input: BotEditorInput): string | null {
+export function getBotEditorInputError(input: BotEditorInput, options: { allowLegacyLlmConfig?: boolean } = {}): string | null {
   if (!input.name) return 'Bot name is required'
   if (!input.platform) return 'Bot platform is required'
   if (input.platform !== 'discord') return 'Only Discord bots are currently supported'
   if (!input.token) return 'Bot token is required'
   if (!input.roleId) return 'Role is required'
-  if (!input.llmPlatformName) return 'Model platform is required'
+
+  if (!input.llmProviderId && !hasLegacyLlmConfig(input, options)) {
+    return 'LLM provider is required'
+  }
+
   if (!input.llmModel) return 'Model is required'
-  if (!input.llmApiKey) return 'Model API key is required'
-  if (!input.llmBaseUrl) return 'Model base URL is required'
+
   if (!input.discordGuildId) return 'Discord guild ID is required'
   return null
+}
+
+function hasLegacyLlmConfig(input: BotEditorInput, options: { allowLegacyLlmConfig?: boolean }) {
+  return options.allowLegacyLlmConfig === true
+    && Boolean(input.llmPlatformName && input.llmApiKey && input.llmBaseUrl)
 }

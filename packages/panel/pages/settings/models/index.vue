@@ -24,6 +24,15 @@
         </template>
 
         <div class="flex min-h-0 flex-1 flex-col gap-2">
+          <UAlert
+            v-if="initialLoadError"
+            color="error"
+            variant="subtle"
+            icon="i-heroicons-exclamation-triangle-20-solid"
+            title="平台列表加载失败"
+            :description="initialLoadError"
+          />
+
           <div v-if="platforms.length" class="min-h-0 flex-1 space-y-1 overflow-y-auto">
             <UButton
               v-for="p in platforms"
@@ -40,12 +49,12 @@
               @click="selectedId = p.id"
             >
               <span class="flex min-w-0 flex-1 items-center gap-2">
-                <USwitch
-                  :model-value="p.enabled"
-                  size="xs"
-                  @update:model-value="togglePlatformEnabled(p.id)"
-                  @click.stop
-                />
+            <USwitch
+              :model-value="p.enabled"
+              size="xs"
+              @update:model-value="handleTogglePlatformEnabled(p.id)"
+              @click.stop
+            />
                 <span class="truncate text-sm">{{ p.name }}</span>
                 <UBadge
                   v-if="!p.builtin"
@@ -91,7 +100,7 @@
               <UBadge :label="getFormatLabel(selectedPlatform.format)" color="neutral" variant="subtle" />
               <span v-if="selectedPlatform.defaultBaseUrl" class="text-xs font-mono text-[var(--text-secondary)]">{{ selectedPlatform.defaultBaseUrl }}</span>
             </div>
-            <USwitch :model-value="selectedPlatform.enabled" @update:model-value="togglePlatformEnabled(selectedPlatform.id)" />
+            <USwitch :model-value="selectedPlatform.enabled" @update:model-value="handleTogglePlatformEnabled(selectedPlatform.id)" />
           </div>
         </template>
 
@@ -185,7 +194,7 @@
                   size="xl"
                   class="cursor-pointer font-mono"
                   title="点击禁用"
-                  @click="disableModel(selectedPlatform.id, m)"
+                  @click="handleDisableModel(selectedPlatform.id, m)"
                 />
                 <UButton
                   icon="i-heroicons-x-mark-20-solid"
@@ -193,7 +202,7 @@
                   variant="ghost"
                   color="error"
                   class="ml-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-                  @click="removeModel(selectedPlatform.id, m)"
+                  @click="handleRemoveModel(selectedPlatform.id, m)"
                 />
               </div>
             </div>
@@ -213,7 +222,7 @@
                   size="xl"
                   class="cursor-pointer font-mono"
                   title="点击启用"
-                  @click="enableModel(selectedPlatform.id, m)"
+                  @click="handleEnableModel(selectedPlatform.id, m)"
                 />
                 <UButton
                   icon="i-heroicons-x-mark-20-solid"
@@ -221,7 +230,7 @@
                   variant="ghost"
                   color="error"
                   class="ml-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-                  @click="removeModel(selectedPlatform.id, m)"
+                  @click="handleRemoveModel(selectedPlatform.id, m)"
                 />
               </div>
             </div>
@@ -290,10 +299,13 @@
 
 <script setup lang="ts">
 import { useModelPlatforms } from '~/composables/modelPlatforms'
+import { refreshModelPlatformsSafely } from '~/composables/modelPlatforms-load'
 import type { ApiFormat } from '~/composables/modelPlatforms'
 
 const {
   platforms,
+  loaded,
+  refresh,
   addPlatform,
   updatePlatform,
   removePlatform,
@@ -304,6 +316,13 @@ const {
   removeModel,
   fetchModels,
 } = useModelPlatforms()
+
+const initialLoadError = ref('')
+
+await callOnce(async () => {
+  const refreshed = await refreshModelPlatformsSafely(refresh)
+  initialLoadError.value = refreshed ? '' : '暂时无法连接模型平台服务，请稍后重试。'
+})
 
 const toast = useToast()
 
@@ -345,6 +364,12 @@ watch(platforms, (items) => {
   }
   if (!selectedId.value || !items.some(item => item.id === selectedId.value)) {
     selectedId.value = items[0]?.id ?? null
+  }
+}, { immediate: true })
+
+watch(loaded, (value) => {
+  if (value) {
+    initialLoadError.value = ''
   }
 }, { immediate: true })
 
@@ -418,46 +443,78 @@ function handleCredentialFileUpload(event: Event) {
   input.value = ''
 }
 
-function handleAddPlatform() {
+function getErrorMessage(error: any, fallback: string) {
+  return error?.data?.message ?? error?.message ?? fallback
+}
+
+async function handleAddPlatform() {
   const name = newPlatformName.value.trim()
   if (!name) return
 
-  const platform = addPlatform(name, newPlatformFormat.value)
-  selectedId.value = platform.id
-  newPlatformName.value = ''
-  showAddModal.value = false
-  toast.add({ title: `已添加平台「${name}」`, color: 'success' })
+  try {
+    const platform = await addPlatform(name, newPlatformFormat.value)
+    selectedId.value = platform.id
+    newPlatformName.value = ''
+    showAddModal.value = false
+    toast.add({ title: `已添加平台「${name}」`, color: 'success' })
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '添加平台失败'), color: 'error' })
+  }
 }
 
-function handleSave() {
+async function saveSelectedPlatform() {
   if (!selectedId.value || !selectedPlatform.value) return
 
   if (selectedPlatform.value.format === 'vertex') {
     const creds = parsedVertexCreds.value
     if (editCredentialsJson.value && !creds) {
       toast.add({ title: '请上传有效的服务账号 JSON 文件', color: 'error' })
-      return
+      return false
     }
     const region = editRegion.value.trim() || 'global'
-    updatePlatform(selectedId.value, {
-      apiKey: editCredentialsJson.value,
-      baseUrl: computedVertexEndpoint.value || selectedPlatform.value.defaultBaseUrl,
-      region,
-    })
+    try {
+      await updatePlatform(selectedId.value, {
+        apiKey: editCredentialsJson.value,
+        baseUrl: computedVertexEndpoint.value || selectedPlatform.value.defaultBaseUrl,
+        region,
+      })
+    }
+    catch (error: any) {
+      toast.add({ title: getErrorMessage(error, '保存失败'), color: 'error' })
+      return false
+    }
   }
   else {
-    updatePlatform(selectedId.value, {
-      baseUrl: editBaseUrl.value.trim(),
-      apiKey: editApiKey.value.trim(),
-    })
+    try {
+      await updatePlatform(selectedId.value, {
+        baseUrl: editBaseUrl.value.trim(),
+        apiKey: editApiKey.value.trim(),
+      })
+    }
+    catch (error: any) {
+      toast.add({ title: getErrorMessage(error, '保存失败'), color: 'error' })
+      return false
+    }
   }
+
   toast.add({ title: '已保存', color: 'success' })
+  return true
 }
 
-function handleRemove(id: string, name: string) {
-  removePlatform(id)
-  if (selectedId.value === id) selectedId.value = null
-  toast.add({ title: `已删除「${name}」` })
+async function handleSave() {
+  await saveSelectedPlatform()
+}
+
+async function handleRemove(id: string, name: string) {
+  try {
+    await removePlatform(id)
+    if (selectedId.value === id) selectedId.value = null
+    toast.add({ title: `已删除「${name}」` })
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '删除平台失败'), color: 'error' })
+  }
 }
 
 const fetchingModels = ref(false)
@@ -466,7 +523,9 @@ const fetchError = ref('')
 async function handleFetchModels() {
   if (!selectedId.value) return
 
-  handleSave()
+  const saved = await saveSelectedPlatform()
+  if (!saved) return
+
   fetchingModels.value = true
   fetchError.value = ''
 
@@ -485,12 +544,54 @@ async function handleFetchModels() {
 
 const customModelInput = ref('')
 
-function handleAddCustomModel() {
+async function handleTogglePlatformEnabled(id: string) {
+  try {
+    await togglePlatformEnabled(id)
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '更新平台状态失败'), color: 'error' })
+  }
+}
+
+async function handleEnableModel(platformId: string, model: string) {
+  try {
+    await enableModel(platformId, model)
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '启用模型失败'), color: 'error' })
+  }
+}
+
+async function handleDisableModel(platformId: string, model: string) {
+  try {
+    await disableModel(platformId, model)
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '禁用模型失败'), color: 'error' })
+  }
+}
+
+async function handleRemoveModel(platformId: string, model: string) {
+  try {
+    await removeModel(platformId, model)
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '删除模型失败'), color: 'error' })
+  }
+}
+
+async function handleAddCustomModel() {
   if (!selectedId.value) return
   const name = customModelInput.value.trim()
   if (!name) return
-  addCustomModel(selectedId.value, name)
-  customModelInput.value = ''
-  toast.add({ title: `已添加自定义模型「${name}」`, color: 'success' })
+
+  try {
+    await addCustomModel(selectedId.value, name)
+    customModelInput.value = ''
+    toast.add({ title: `已添加自定义模型「${name}」`, color: 'success' })
+  }
+  catch (error: any) {
+    toast.add({ title: getErrorMessage(error, '添加自定义模型失败'), color: 'error' })
+  }
 }
 </script>

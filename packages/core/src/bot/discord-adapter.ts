@@ -92,6 +92,7 @@ export class DiscordAdapter {
     private agent: Agent,
     private conversations: ConversationService,
     private getGeneralSettings: () => GeneralSettings,
+    private getCurrentProviderName: () => string | undefined,
     private listAvailableModels: () => Promise<string[]>,
     private setModel: (modelId: string) => Promise<string>,
     ) {
@@ -135,6 +136,7 @@ export class DiscordAdapter {
 
     this.modelCommand = new DiscordModelCommand({
       getCurrentModel: () => this.instance.llmModel,
+      getCurrentProviderName: () => this.getCurrentProviderName(),
       listAvailableModels: this.listAvailableModels,
       setModel: this.setModel,
     })

@@ -11,7 +11,26 @@ export function createEmptyBotEditorInput(): BotEditorInput {
 }
 
 export function buildBotEditorInput(bot: BotProfile | null | undefined): BotEditorInput {
-  return normalizeBotEditorInput(bot ?? {}, { enabledDefault: true })
+  if (!bot) {
+    return normalizeBotEditorInput({}, { enabledDefault: true })
+  }
+
+  return normalizeBotEditorInput({
+    name: bot.name,
+    platform: bot.platform,
+    token: bot.token,
+    roleId: bot.roleId,
+    llmProvider: bot.llmProvider,
+    llmProviderId: bot.llmProviderId,
+    llmPlatformName: bot.llmPlatformName,
+    llmModel: bot.llmModel,
+    llmApiKey: bot.llmApiKey,
+    llmBaseUrl: bot.llmBaseUrl,
+    discordUserId: bot.discordUserId,
+    discordChannelId: bot.discordChannelId,
+    discordGuildId: bot.discordGuildId,
+    enabled: bot.enabled,
+  }, { enabledDefault: true })
 }
 
 export function buildBotRoleOptions(roles: RoleProfile[]): BotSelectOption[] {

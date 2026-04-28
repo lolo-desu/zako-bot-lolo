@@ -2,6 +2,7 @@
 
 export * from './types/plugin.js'
 export * from './types/llm.js'
+export * from './types/llm-provider.js'
 export * from './types/role.js'
 export * from './types/search-settings.js'
 export * from './types/browse-settings.js'

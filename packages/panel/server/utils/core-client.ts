@@ -1,5 +1,6 @@
 import type { ApiResponse } from '@zakobot/shared'
 import { createError } from 'h3'
+import { resolveCoreApiUrl } from './core-client-path'
 
 class CoreApiError extends Error {
   statusCode: number
@@ -18,7 +19,7 @@ class CoreApiError extends Error {
 async function coreRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const config = useRuntimeConfig()
   const method = init?.method ?? 'GET'
-  const url = new URL(path, ensureTrailingSlash(config.coreApiUrl)).toString()
+  const url = resolveCoreApiUrl(path, config.coreApiUrl)
   let res: Response
 
   try {
@@ -47,10 +48,6 @@ async function coreRequest<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   return json.data
-}
-
-function ensureTrailingSlash(value: string) {
-  return value.endsWith('/') ? value : `${value}/`
 }
 
 function toPanelApiError(error: unknown, fallbackMessage: string) {

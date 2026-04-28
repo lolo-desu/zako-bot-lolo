@@ -4,6 +4,7 @@ import type {
   BrowseSettings,
   CreateConversationTopicInput,
   GeneralSettings,
+  LlmProviderEditorInput,
   LocalMemorySettings,
   McpServerEditorInput,
   RoleEditorInput,
@@ -68,14 +69,41 @@ export function parseSkillImportInput(body: Partial<SkillImportInput>): SkillImp
   return { fileName, contentBase64, sourceType }
 }
 
-export function parseBotInput(body: Partial<BotEditorInput>) {
+export function parseBotInput(body: Partial<BotEditorInput>, options: { allowLegacyLlmConfig?: boolean } = {}) {
   const normalized = normalizeBotEditorInput(body, { enabledDefault: false })
-  const error = getBotEditorInputError(normalized)
+  const error = getBotEditorInputError(normalized, options)
   if (error) {
     throw new Error(error)
   }
 
   return normalized
+}
+
+export function parseLlmProviderInput(body: Partial<LlmProviderEditorInput>) {
+  const name = body.name?.trim() ?? ''
+  const format = body.format
+  const baseUrl = body.baseUrl?.trim() ?? ''
+  const apiKey = body.apiKey?.trim() ?? ''
+
+  if (!name) {
+    throw new Error('LLM provider name is required')
+  }
+
+  if (format !== 'openai' && format !== 'google' && format !== 'vertex') {
+    throw new Error('LLM provider format must be openai, google, or vertex')
+  }
+
+  return {
+    name,
+    format,
+    baseUrl,
+    apiKey,
+    enabledModels: JSON.stringify(normalizeStringArray(body.enabledModels)),
+    disabledModels: JSON.stringify(normalizeStringArray(body.disabledModels)),
+    region: body.region?.trim() ?? '',
+    enabled: body.enabled === false ? false : true,
+    builtin: body.builtin === true,
+  }
 }
 
 export function parseCreateConversationTopicInput(body: Partial<CreateConversationTopicInput>) {
@@ -182,4 +210,29 @@ function normalizeStringRecord(value: unknown): Record<string, string> {
   return Object.fromEntries(
     Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
   )
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  const result: string[] = []
+  const seen = new Set<string>()
+
+  for (const item of value) {
+    if (typeof item !== 'string') {
+      continue
+    }
+
+    const normalized = item.trim()
+    if (!normalized || seen.has(normalized)) {
+      continue
+    }
+
+    seen.add(normalized)
+    result.push(normalized)
+  }
+
+  return result
 }

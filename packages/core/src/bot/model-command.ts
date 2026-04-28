@@ -17,6 +17,7 @@ export const MODEL_COMMAND = {
 
 type ModelCommandDeps = {
   getCurrentModel: () => string
+  getCurrentProviderName?: () => string | undefined
   listAvailableModels: () => Promise<string[]>
   setModel: (modelId: string) => Promise<string>
 }
@@ -49,8 +50,10 @@ export class DiscordModelCommand {
   async buildListReply() {
     const models = await this.deps.listAvailableModels()
     const currentModel = this.deps.getCurrentModel()
+    const currentProvider = this.deps.getCurrentProviderName?.()?.trim()
     const header = [
       `当前模型：\`${currentModel}\``,
+      ...(currentProvider ? [`当前提供商：\`${currentProvider}\``] : []),
       '可用模型列表：',
     ]
     const lines = models.length > 0
@@ -76,7 +79,10 @@ export class DiscordModelCommand {
     }
 
     const appliedModel = await this.deps.setModel(nextModel)
-    return `已将默认模型永久切换为第 ${index} 个：\`${appliedModel}\`。后续请求会使用该模型。`
+    const currentProvider = this.deps.getCurrentProviderName?.()?.trim()
+    return currentProvider
+      ? `已将提供商 \`${currentProvider}\` 的默认模型永久切换为第 ${index} 个：\`${appliedModel}\`。后续请求会使用该模型。`
+      : `已将默认模型永久切换为第 ${index} 个：\`${appliedModel}\`。后续请求会使用该模型。`
   }
 
   private chunkReplyLines(lines: string[]) {
