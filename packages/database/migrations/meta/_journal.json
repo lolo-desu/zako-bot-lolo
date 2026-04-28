@@ -78,6 +78,13 @@
       "when": 1777209481612,
       "tag": "0010_agent_authored_skills",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1777295558508,
+      "tag": "0011_llm_providers",
+      "breakpoints": true
     }
   ]
 }

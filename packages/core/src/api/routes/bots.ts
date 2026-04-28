@@ -4,12 +4,18 @@ import {
   createBot,
   deleteBot,
   getBotWithRole,
+  getLlmProvider,
   getRole,
   listBotsWithRoles,
   updateBot,
 } from '@zakobot/database'
 import type { DB } from '@zakobot/database'
+import {
+  hasTask4BridgeRuntimeConfig,
+  isTask4BridgeCompatibleProviderFormat,
+} from '@zakobot/shared'
 import type { ApiResponse } from '@zakobot/shared'
+import type { LlmProviderRow } from '@zakobot/database'
 import type { BotManager } from '../../bot/bot-manager.js'
 import { getApiErrorMessage, getApiErrorStatus, readJsonBody } from '../http.js'
 import { toBotListItem, toBotProfile } from '../serializers.js'
@@ -47,6 +53,18 @@ export async function getBotsRoute(
         return { status: 404, body: { ok: false, error: 'Role not found' } }
       }
 
+      const runtimeConfig = getRuntimeBotConfig(db, payload)
+      if ('error' in runtimeConfig) {
+        return runtimeConfig.error
+      }
+
+      if ('provider' in runtimeConfig && !providerHasEnabledModel(runtimeConfig.provider, payload.llmModel)) {
+        return {
+          status: 400,
+          body: { ok: false, error: 'Selected LLM model is not enabled for the provider' },
+        }
+      }
+
       const now = new Date()
       const created = createBot(db, {
         id: randomUUID(),
@@ -55,10 +73,11 @@ export async function getBotsRoute(
         token: payload.token,
         roleId: payload.roleId,
         llmProvider: payload.llmProvider,
-        llmPlatformName: payload.llmPlatformName,
+        llmProviderId: runtimeConfig.id,
+        llmPlatformName: runtimeConfig.name,
         llmModel: payload.llmModel,
-        llmApiKey: payload.llmApiKey,
-        llmBaseUrl: payload.llmBaseUrl,
+        llmApiKey: runtimeConfig.apiKey,
+        llmBaseUrl: runtimeConfig.baseUrl,
         discordUserId: payload.discordUserId,
         discordChannelId: payload.discordChannelId,
         discordGuildId: payload.discordGuildId,
@@ -71,9 +90,13 @@ export async function getBotsRoute(
         throw new Error('Failed to create bot')
       }
 
-      await botManager.syncInstance(created.instance.id).catch((error) => {
-        console.error(`[ApiServer] Failed to sync bot "${created.instance.name}":`, error)
-      })
+      const createSyncError = await syncBotRuntime(botManager, created.instance.id, created.instance.name)
+      if (createSyncError) {
+        return {
+          status: 500,
+          body: { ok: false, error: `Bot was saved but failed to sync runtime: ${createSyncError}` },
+        }
+      }
 
       return { status: 201, body: { ok: true, data: toBotProfile(created) } }
     }
@@ -101,10 +124,26 @@ export async function getBotsRoute(
     }
 
     try {
-      const payload = parseBotInput(await readJsonBody(req))
+      const payload = parseBotInput(await readJsonBody(req), {
+        allowLegacyLlmConfig: !existing.instance.llmProviderId?.trim(),
+      })
 
       if (!getRole(db, payload.roleId)) {
         return { status: 404, body: { ok: false, error: 'Role not found' } }
+      }
+
+      const runtimeConfig = getRuntimeBotConfig(db, payload, {
+        allowLegacyLlmConfig: !existing.instance.llmProviderId?.trim(),
+      })
+      if ('error' in runtimeConfig) {
+        return runtimeConfig.error
+      }
+
+      if ('provider' in runtimeConfig && !providerHasEnabledModel(runtimeConfig.provider, payload.llmModel)) {
+        return {
+          status: 400,
+          body: { ok: false, error: 'Selected LLM model is not enabled for the provider' },
+        }
       }
 
       const updated = updateBot(db, botMatch[1], {
@@ -113,10 +152,11 @@ export async function getBotsRoute(
         token: payload.token,
         roleId: payload.roleId,
         llmProvider: payload.llmProvider,
-        llmPlatformName: payload.llmPlatformName,
+        llmProviderId: runtimeConfig.id,
+        llmPlatformName: runtimeConfig.name,
         llmModel: payload.llmModel,
-        llmApiKey: payload.llmApiKey,
-        llmBaseUrl: payload.llmBaseUrl,
+        llmApiKey: runtimeConfig.apiKey,
+        llmBaseUrl: runtimeConfig.baseUrl,
         discordUserId: payload.discordUserId,
         discordChannelId: payload.discordChannelId,
         discordGuildId: payload.discordGuildId,
@@ -128,9 +168,13 @@ export async function getBotsRoute(
         throw new Error('Failed to update bot')
       }
 
-      await botManager.syncInstance(updated.instance.id).catch((error) => {
-        console.error(`[ApiServer] Failed to sync bot "${updated.instance.name}":`, error)
-      })
+      const updateSyncError = await syncBotRuntime(botManager, updated.instance.id, updated.instance.name)
+      if (updateSyncError) {
+        return {
+          status: 500,
+          body: { ok: false, error: `Bot was updated but failed to sync runtime: ${updateSyncError}` },
+        }
+      }
 
       return { body: { ok: true, data: toBotProfile(updated) } }
     }
@@ -163,5 +207,109 @@ function errorResult(error: unknown, fallback: string, status = 400): RouteResul
   return {
     status: getApiErrorStatus(error, status),
     body: { ok: false, error: getApiErrorMessage(error, fallback) },
+  }
+}
+
+function getProviderBridgeConfig(db: DB, llmProviderId: string):
+  | { id: string; name: string; apiKey: string; baseUrl: string; provider: LlmProviderRow }
+  | { error: RouteResult } {
+  if (!llmProviderId) {
+    return { error: { status: 400, body: { ok: false, error: 'LLM provider is required' } } }
+  }
+
+  const provider = getLlmProvider(db, llmProviderId)
+  if (!provider) {
+    return { error: { status: 404, body: { ok: false, error: 'LLM provider not found' } } }
+  }
+
+  if (!isTask4BridgeCompatibleProviderFormat(provider.format)) {
+    return {
+      error: {
+        status: 400,
+        body: { ok: false, error: 'Selected LLM provider format is not supported for bot runtime yet' },
+      },
+    }
+  }
+
+  if (!hasTask4BridgeRuntimeConfig(provider)) {
+    return {
+      error: {
+        status: 400,
+        body: { ok: false, error: 'Selected LLM provider is missing base URL or API key' },
+      },
+    }
+  }
+
+  if (!provider.enabled) {
+    return {
+      error: {
+        status: 400,
+        body: { ok: false, error: 'Selected LLM provider is disabled' },
+      },
+    }
+  }
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    apiKey: provider.apiKey,
+    baseUrl: provider.baseUrl,
+    provider,
+  }
+}
+
+function getRuntimeBotConfig(
+  db: DB,
+  payload: {
+    llmProviderId: string
+    llmPlatformName: string
+    llmApiKey: string
+    llmBaseUrl: string
+  },
+  options: { allowLegacyLlmConfig?: boolean } = {},
+):
+  | { id: string | null; name: string; apiKey: string; baseUrl: string }
+  | { id: string; name: string; apiKey: string; baseUrl: string; provider: LlmProviderRow }
+  | { error: RouteResult } {
+  if (!payload.llmProviderId) {
+    if (!options.allowLegacyLlmConfig) {
+      return { error: { status: 400, body: { ok: false, error: 'LLM provider is required' } } }
+    }
+
+    return {
+      id: null,
+      name: payload.llmPlatformName,
+      apiKey: payload.llmApiKey,
+      baseUrl: payload.llmBaseUrl,
+    }
+  }
+
+  return getProviderBridgeConfig(db, payload.llmProviderId)
+}
+
+function providerHasEnabledModel(provider: Pick<LlmProviderRow, 'enabledModels'>, model: string) {
+  return parseStringArray(provider.enabledModels).includes(model)
+}
+
+function parseStringArray(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === 'string')
+      : []
+  }
+  catch {
+    return []
+  }
+}
+
+async function syncBotRuntime(botManager: BotManager, botId: string, botName: string) {
+  try {
+    await botManager.syncInstance(botId)
+    return undefined
+  }
+  catch (error) {
+    console.error(`[ApiServer] Failed to sync bot "${botName}":`, error)
+    return error instanceof Error ? error.message : String(error)
   }
 }

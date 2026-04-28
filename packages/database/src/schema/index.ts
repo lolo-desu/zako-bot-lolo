@@ -1,5 +1,6 @@
 export * from './roles.js'
 export * from './bot-instances.js'
+export * from './llm-providers.js'
 export * from './plugins.js'
 export * from './conversations.js'
 export * from './app-settings.js'

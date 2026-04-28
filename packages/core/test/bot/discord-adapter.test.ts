@@ -31,6 +31,7 @@ function createAdapter() {
       toolApprovalMode: 'all',
       toolProcessMode: 'full',
     }),
+    () => 'Provider One',
     async () => [],
     async () => 'ok',
   )

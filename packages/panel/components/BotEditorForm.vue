@@ -170,7 +170,11 @@
 import { getBotEditorInputError, normalizeBotEditorInput } from '@zakobot/shared'
 import type { BotEditorInput } from '@zakobot/shared'
 import { createEmptyBotEditorInput } from '~/composables/bot-editor'
-import { useModelPlatforms } from '~/composables/modelPlatforms'
+import {
+  getTask4BotModelOptions,
+  isTask4BotModelSelectionUsable,
+  useModelPlatforms,
+} from '~/composables/modelPlatforms'
 
 type SelectOption = {
   label: string
@@ -181,6 +185,7 @@ type ModelOption = SelectOption & {
   apiKey: string
   baseUrl: string
   model: string
+  providerId: string
   platformName: string
 }
 
@@ -197,8 +202,7 @@ const emit = defineEmits<{
   submit: [value: BotEditorInput]
 }>()
 
-const { platforms } = useModelPlatforms()
-const platformsReady = ref(false)
+const { platforms, loaded: platformsReady } = useModelPlatforms()
 
 const state = reactive<BotEditorInput>(createEmptyBotEditorInput())
 
@@ -212,32 +216,17 @@ const platformOptions: SelectOption[] = [
 const roleOptions = computed(() => props.roleOptions)
 const normalizedState = computed(() => normalizeBotEditorInput(state, { enabledDefault: true }))
 
-const modelOptions = computed<ModelOption[]>(() =>
-  platforms.value
-    .filter(p => p.enabled)
-    .flatMap(platform =>
-      platform.enabledModels.map(model => ({
-        label: `${platform.name}-${model}`,
-        value: `${platform.id}::${model}`,
-        apiKey: platform.apiKey,
-        baseUrl: platform.baseUrl,
-        model,
-        platformName: platform.name,
-      })),
-    ),
-)
+const modelOptions = computed<ModelOption[]>(() => getTask4BotModelOptions(platforms.value))
 
 const modelSelectOptions = computed<SelectOption[]>(() => {
   const options: SelectOption[] = modelOptions.value.map(({ label, value }) => ({ label, value }))
 
-  if (!state.llmPlatformName || !state.llmModel) {
+  if (!state.llmModel) {
     return options
   }
 
-  const fallbackValue = getFallbackModelValue(state.llmPlatformName, state.llmModel)
-  const hasCurrent = options.some(option =>
-    option.label === `${state.llmPlatformName}-${state.llmModel}` || option.value === fallbackValue,
-  )
+  const fallbackValue = getFallbackModelValue(state.llmProviderId, state.llmPlatformName, state.llmModel)
+  const hasCurrent = options.some(option => option.value === selectedModelValue.value || option.value === fallbackValue)
 
   if (hasCurrent) {
     return options
@@ -250,10 +239,14 @@ const modelSelectOptions = computed<SelectOption[]>(() => {
 })
 
 const showModelAlert = computed(() => platformsReady.value && modelOptions.value.length === 0)
-
-onMounted(() => {
-  platformsReady.value = true
-})
+const allowLegacyLlmConfig = computed(() =>
+  selectedModelValue.value.startsWith('saved::legacy::')
+  && !state.llmProviderId
+  && Boolean(state.llmPlatformName && state.llmModel && state.llmApiKey.trim() && state.llmBaseUrl.trim()),
+)
+const hasUsableSelectedModel = computed(() =>
+  isTask4BotModelSelectionUsable(selectedModelValue.value, modelOptions.value, allowLegacyLlmConfig.value),
+)
 
 watch(
   () => props.initialValue,
@@ -263,6 +256,7 @@ watch(
     state.token = value.token
     state.roleId = value.roleId
     state.llmProvider = value.llmProvider
+    state.llmProviderId = value.llmProviderId
     state.llmPlatformName = value.llmPlatformName
     state.llmModel = value.llmModel
     state.llmApiKey = value.llmApiKey
@@ -271,17 +265,17 @@ watch(
     state.discordChannelId = value.discordChannelId
     state.discordGuildId = value.discordGuildId
     state.enabled = value.enabled
-    selectedModelValue.value = resolveModelValue(value.llmPlatformName, value.llmModel)
+    selectedModelValue.value = resolveModelValue(value.llmProviderId, value.llmPlatformName, value.llmModel)
   },
   { immediate: true, deep: true },
 )
 
 watch(modelOptions, () => {
-  if (!state.llmPlatformName || !state.llmModel) {
+  if (!state.llmModel) {
     return
   }
 
-  selectedModelValue.value = resolveModelValue(state.llmPlatformName, state.llmModel)
+  selectedModelValue.value = resolveModelValue(state.llmProviderId, state.llmPlatformName, state.llmModel)
 }, { immediate: true })
 
 watch(selectedModelValue, (value) => {
@@ -292,6 +286,7 @@ watch(selectedModelValue, (value) => {
   }
 
   state.llmProvider = 'openai'
+  state.llmProviderId = selected.providerId
   state.llmPlatformName = selected.platformName
   state.llmModel = selected.model
   state.llmApiKey = selected.apiKey.trim()
@@ -299,7 +294,8 @@ watch(selectedModelValue, (value) => {
 })
 
 const canSubmit = computed(() =>
-  getBotEditorInputError(normalizedState.value) === null,
+  getBotEditorInputError(normalizedState.value, { allowLegacyLlmConfig: allowLegacyLlmConfig.value }) === null
+    && hasUsableSelectedModel.value,
 )
 
 function handleSubmit() {
@@ -310,15 +306,23 @@ function handleSubmit() {
   emit('submit', normalizedState.value)
 }
 
-function resolveModelValue(platformName: string, model: string) {
-  const matched = modelOptions.value.find(option =>
-    option.platformName === platformName && option.model === model,
-  )
+function resolveModelValue(providerId: string, platformName: string, model: string) {
+  const matched = modelOptions.value.find(option => {
+    if (providerId) {
+      return option.providerId === providerId && option.model === model
+    }
 
-  return matched?.value ?? getFallbackModelValue(platformName, model)
+    return option.platformName === platformName && option.model === model
+  })
+
+  return matched?.value ?? getFallbackModelValue(providerId, platformName, model)
 }
 
-function getFallbackModelValue(platformName: string, model: string) {
-  return `saved::${platformName}::${model}`
+function getFallbackModelValue(providerId: string, platformName: string, model: string) {
+  if (providerId) {
+    return `saved::${providerId}::${model}`
+  }
+
+  return `saved::legacy::${platformName}::${model}`
 }
 </script>

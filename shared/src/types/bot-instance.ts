@@ -6,6 +6,7 @@ export interface BotEditorInput {
   token: string
   roleId: string
   llmProvider: 'openai'
+  llmProviderId: string
   llmPlatformName: string
   llmModel: string
   llmApiKey: string

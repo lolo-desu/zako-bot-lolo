@@ -6,13 +6,15 @@ import type {
   BotInstanceRow,
   RoleRow,
 } from '@zakobot/database'
-import { getEnabledBots, getBotWithRole, getRole, updateBot } from '@zakobot/database'
+import { getEnabledBots, getBotWithRole, getLlmProvider, getRole, updateBot } from '@zakobot/database'
 import type { GeneralSettings, LocalMemorySettings } from '@zakobot/shared'
+import { hasTask4BridgeRuntimeConfig, isTask4BridgeCompatibleProviderFormat } from '@zakobot/shared'
 import { DiscordAdapter } from './discord-adapter.js'
 import { runPostReplyHooks } from './post-reply-hooks.js'
 import { Agent } from '../llm/agent.js'
 import { ConversationService } from '../llm/conversation-service.js'
 import { fetchAvailableModels } from '../llm/list-models.js'
+import { toProviderLlmConfig } from '../llm/provider-config.js'
 import type { ToolRegistry } from '../tools/index.js'
 import type { SkillManager } from '../skills/index.js'
 import { LocalMemoryService } from '../memory/local-memory-service.js'
@@ -188,9 +190,15 @@ export class BotManager {
       return
     }
 
-    if (!row.instance.llmModel || !row.instance.llmApiKey || !row.instance.llmBaseUrl) {
+    if (!row.instance.llmModel?.trim()) {
       throw new Error(`Bot "${row.instance.name}" is missing LLM configuration`)
     }
+
+    if (!row.instance.llmProviderId?.trim() && (!row.instance.llmApiKey?.trim() || !row.instance.llmBaseUrl?.trim())) {
+      throw new Error(`Bot "${row.instance.name}" is missing LLM configuration`)
+    }
+
+    this.resolveRuntimeLlmConfig(row.instance)
 
     if (this.adapters.has(row.instance.id)) {
       await this.stopOne(row.instance.id)
@@ -203,6 +211,7 @@ export class BotManager {
       agent,
       this.conversations,
       this.getGeneralSettings,
+      () => this.getCurrentProviderName(row.instance.id),
       () => this.listAvailableModels(row.instance.id),
       (modelId) => this.setModel(row.instance.id, modelId),
     )
@@ -245,11 +254,12 @@ export class BotManager {
 
   async listAvailableModels(instanceId: string) {
     const row = this.requireBotRow(instanceId)
-    return fetchAvailableModels({
-      platformName: row.instance.llmPlatformName,
-      apiKey: row.instance.llmApiKey,
-      baseUrl: row.instance.llmBaseUrl,
-    })
+    const provider = this.requireBoundProvider(row.instance)
+    if (provider) {
+      return this.parseStringArray(provider.enabledModels)
+    }
+
+    return fetchAvailableModels(this.resolveModelListConfig(row.instance))
   }
 
   async setModel(instanceId: string, modelId: string) {
@@ -259,6 +269,13 @@ export class BotManager {
     }
 
     const row = this.requireBotRow(instanceId)
+    const provider = this.requireBoundProvider(row.instance)
+    if (provider) {
+      if (!this.parseStringArray(provider.enabledModels).includes(nextModel)) {
+        throw new Error('Selected LLM model is not enabled for the provider')
+      }
+    }
+
     const updated = updateBot(this.db, instanceId, {
       llmModel: nextModel,
       updatedAt: new Date(),
@@ -282,12 +299,7 @@ export class BotManager {
     return new Agent(
       row.instance.id,
       () => getRole(this.db, roleId) ?? fallbackRole,
-      {
-        provider: row.instance.llmProvider as 'openai',
-        model: row.instance.llmModel,
-        apiKey: row.instance.llmApiKey,
-        baseUrl: row.instance.llmBaseUrl,
-      },
+      this.resolveRuntimeLlmConfig(row.instance),
       this.conversations,
       this.toolRegistry,
       this.skillManager,
@@ -302,11 +314,83 @@ export class BotManager {
       throw new Error(`Bot instance "${instanceId}" not found`)
     }
 
-    if (!row.instance.llmModel || !row.instance.llmApiKey || !row.instance.llmBaseUrl) {
+    if (!row.instance.llmModel?.trim()) {
+      throw new Error(`Bot "${row.instance.name}" is missing LLM configuration`)
+    }
+
+    const providerId = row.instance.llmProviderId?.trim()
+    if (providerId) {
+      this.requireBoundProvider(row.instance)
+      return row
+    }
+
+    if (!row.instance.llmApiKey?.trim() || !row.instance.llmBaseUrl?.trim()) {
       throw new Error(`Bot "${row.instance.name}" is missing LLM configuration`)
     }
 
     return row
+  }
+
+  private getCurrentProviderName(instanceId: string) {
+    const row = this.requireBotRow(instanceId)
+    return this.requireBoundProvider(row.instance)?.name ?? (row.instance.llmPlatformName?.trim() || undefined)
+  }
+
+  private requireBoundProvider(instance: BotInstanceRow) {
+    const providerId = instance.llmProviderId?.trim()
+    if (!providerId) {
+      return null
+    }
+
+    const provider = getLlmProvider(this.db, providerId)
+    if (!provider) {
+      throw new Error('LLM provider not found')
+    }
+
+    if (!provider.enabled) {
+      throw new Error('LLM provider is disabled')
+    }
+
+    if (!isTask4BridgeCompatibleProviderFormat(provider.format)) {
+      throw new Error('LLM provider format is not supported for bot runtime')
+    }
+
+    if (!hasTask4BridgeRuntimeConfig(provider)) {
+      throw new Error('LLM provider is missing base URL or API key')
+    }
+
+    return provider
+  }
+
+  private resolveModelListConfig(instance: BotInstanceRow) {
+    const provider = this.requireBoundProvider(instance)
+    if (provider) {
+      return {
+        platformName: provider.format,
+        apiKey: provider.apiKey,
+        baseUrl: provider.baseUrl,
+      }
+    }
+
+    return {
+      platformName: instance.llmPlatformName,
+      apiKey: instance.llmApiKey,
+      baseUrl: instance.llmBaseUrl,
+    }
+  }
+
+  private resolveRuntimeLlmConfig(instance: BotInstanceRow) {
+    const provider = this.requireBoundProvider(instance)
+    if (provider) {
+      return toProviderLlmConfig(provider, instance.llmModel)
+    }
+
+    return {
+      provider: instance.llmProvider as 'openai',
+      model: instance.llmModel,
+      apiKey: instance.llmApiKey,
+      baseUrl: instance.llmBaseUrl,
+    }
   }
 
   private parseJsonRecord(value: string): Record<string, unknown> {
@@ -315,6 +399,18 @@ export class BotManager {
       return parsed && typeof parsed === 'object' ? parsed : {}
     } catch {
       return {}
+    }
+  }
+
+  private parseStringArray(value: string): string[] {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return Array.isArray(parsed)
+        ? parsed.filter((item): item is string => typeof item === 'string')
+        : []
+    }
+    catch {
+      return []
     }
   }
 }

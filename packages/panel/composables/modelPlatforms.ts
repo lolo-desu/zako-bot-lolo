@@ -1,4 +1,12 @@
-export type ApiFormat = 'openai' | 'google' | 'vertex'
+import {
+  BUILTIN_LLM_PROVIDER_TEMPLATES,
+  isTask4BotSelectableProvider,
+} from '@zakobot/shared'
+import type { LlmProviderEditorInput, LlmProviderFormat, LlmProviderProfile } from '@zakobot/shared'
+import { useLlmProvidersApi } from './api/useLlmProvidersApi'
+import { refreshModelPlatformsSafely } from './modelPlatforms-load'
+
+export type ApiFormat = LlmProviderFormat
 
 export interface ModelPlatform {
   id: string
@@ -14,222 +22,214 @@ export interface ModelPlatform {
   builtin?: boolean
 }
 
-const STORAGE_KEY = 'zakobot-model-platforms'
-
-const BUILT_IN_PLATFORMS: Omit<ModelPlatform, 'apiKey' | 'enabled' | 'enabledModels' | 'disabledModels'>[] = [
-  {
-    id: 'openai',
-    name: 'OpenAI',
-    format: 'openai',
-    baseUrl: 'https://api.openai.com',
-    defaultBaseUrl: 'https://api.openai.com',
-    builtin: true,
-  },
-  {
-    id: 'deepseek',
-    name: 'DeepSeek',
-    format: 'openai',
-    baseUrl: 'https://api.deepseek.com',
-    defaultBaseUrl: 'https://api.deepseek.com',
-    builtin: true,
-  },
-  {
-    id: 'google',
-    name: 'Google AI Studio',
-    format: 'google',
-    baseUrl: 'https://generativelanguage.googleapis.com',
-    defaultBaseUrl: 'https://generativelanguage.googleapis.com',
-    builtin: true,
-  },
-  {
-    id: 'vertex',
-    name: 'Google Vertex AI',
-    format: 'vertex',
-    baseUrl: 'https://aiplatform.googleapis.com',
-    defaultBaseUrl: 'https://aiplatform.googleapis.com',
-    builtin: true,
-  },
-]
-
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+export interface Task4BotModelOption {
+  label: string
+  value: string
+  apiKey: string
+  baseUrl: string
+  model: string
+  providerId: string
+  platformName: string
 }
 
-function createDefault(): ModelPlatform[] {
-  return BUILT_IN_PLATFORMS.map(b => ({
-    ...b,
-    apiKey: '',
-    enabled: false,
-    enabledModels: [],
-    disabledModels: [],
-  }))
+export function getTask4BotModelOptions(platforms: ModelPlatform[]): Task4BotModelOption[] {
+  return platforms
+    .filter(platform => isTask4BotSelectableProvider(platform))
+    .flatMap(platform =>
+      platform.enabledModels.map(model => ({
+        label: `${platform.name}-${model}`,
+        value: `${platform.id}::${model}`,
+        apiKey: platform.apiKey,
+        baseUrl: platform.baseUrl,
+        model,
+        providerId: platform.id,
+        platformName: platform.name,
+      })),
+    )
 }
 
-function loadPlatforms(): ModelPlatform[] {
-  if (import.meta.server) return []
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return createDefault()
-    const stored = JSON.parse(raw) as Partial<ModelPlatform>[]
+export function isTask4BotModelSelectionUsable(selectedValue: string, options: Task4BotModelOption[], allowLegacyFallback = false) {
+  return options.some(option => option.value === selectedValue)
+    || (allowLegacyFallback && selectedValue.startsWith('saved::legacy::'))
+}
 
-    const builtin = BUILT_IN_PLATFORMS.map((b) => {
-      const existing = stored.find(s => s.id === b.id)
-      if (!existing) {
-        return { ...b, apiKey: '', enabled: false, enabledModels: [], disabledModels: [] }
-      }
-      return {
-        ...b,
-        baseUrl: existing.baseUrl ?? b.baseUrl,
-        apiKey: existing.apiKey ?? '',
-        enabled: existing.enabled ?? false,
-        enabledModels: existing.enabledModels ?? [],
-        disabledModels: existing.disabledModels ?? [],
-        region: existing.region,
-      }
-    })
+function toModelPlatform(provider: LlmProviderProfile): ModelPlatform {
+  const builtin = provider.builtin
+    ? BUILTIN_LLM_PROVIDER_TEMPLATES.find(item => item.name === provider.name && item.format === provider.format)
+    : undefined
 
-    const custom = stored
-      .filter(s => !BUILT_IN_PLATFORMS.some(b => b.id === s.id))
-      .map(s => ({
-        id: s.id ?? generateId(),
-        name: s.name ?? '',
-        format: s.format ?? 'openai',
-        baseUrl: s.baseUrl ?? '',
-        defaultBaseUrl: s.defaultBaseUrl ?? '',
-        apiKey: s.apiKey ?? '',
-        enabled: s.enabled ?? false,
-        enabledModels: s.enabledModels ?? [],
-        disabledModels: s.disabledModels ?? [],
-        region: s.region,
-        builtin: false,
-      }))
-
-    return [...builtin, ...custom]
-  }
-  catch {
-    return createDefault()
+  return {
+    id: provider.id,
+    name: provider.name,
+    format: provider.format,
+    baseUrl: provider.baseUrl,
+    defaultBaseUrl: builtin?.defaultBaseUrl ?? provider.baseUrl,
+    apiKey: provider.apiKey,
+    enabled: provider.enabled,
+    enabledModels: [...provider.enabledModels],
+    disabledModels: [...provider.disabledModels],
+    region: provider.region,
+    builtin: provider.builtin,
   }
 }
 
-function savePlatforms(platforms: ModelPlatform[]) {
-  if (import.meta.server) return
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(platforms))
+function toEditorInput(platform: ModelPlatform): LlmProviderEditorInput {
+  return {
+    name: platform.name,
+    format: platform.format,
+    baseUrl: platform.baseUrl,
+    apiKey: platform.apiKey,
+    enabled: platform.enabled,
+    enabledModels: [...platform.enabledModels],
+    disabledModels: [...platform.disabledModels],
+    region: platform.region ?? '',
+    builtin: Boolean(platform.builtin),
+  }
 }
 
 export function useModelPlatforms() {
-  const platforms = ref<ModelPlatform[]>([])
+  const api = useLlmProvidersApi()
+  const platforms = useState<ModelPlatform[]>('llm-provider-platforms', () => [])
+  const loaded = useState('llm-provider-platforms-loaded', () => false)
+
+  function replacePlatform(provider: LlmProviderProfile) {
+    const next = toModelPlatform(provider)
+    const index = platforms.value.findIndex(platform => platform.id === provider.id)
+
+    if (index === -1) {
+      platforms.value = [...platforms.value, next]
+      return next
+    }
+
+    platforms.value = platforms.value.map((platform, platformIndex) =>
+      platformIndex === index ? next : platform,
+    )
+    return next
+  }
+
+  function getPlatform(id: string) {
+    return platforms.value.find(platform => platform.id === id)
+  }
 
   onMounted(() => {
-    platforms.value = loadPlatforms()
+    if (!loaded.value) {
+      void refreshModelPlatformsSafely(refresh)
+    }
   })
 
-  function addPlatform(name: string, format: ApiFormat): ModelPlatform {
-    const platform: ModelPlatform = {
-      id: generateId(),
+  async function refresh() {
+    const providers = await api.list()
+    platforms.value = providers.map(toModelPlatform)
+    loaded.value = true
+  }
+
+  async function addPlatform(name: string, format: ApiFormat): Promise<ModelPlatform> {
+    const created = await api.create({
       name,
       format,
       baseUrl: '',
-      defaultBaseUrl: '',
       apiKey: '',
       enabled: false,
       enabledModels: [],
       disabledModels: [],
+      region: '',
       builtin: false,
-    }
-    platforms.value.push(platform)
-    savePlatforms(platforms.value)
-    return platform
+    })
+
+    loaded.value = true
+    return replacePlatform(created)
   }
 
-  function updatePlatform(id: string, patch: Partial<Omit<ModelPlatform, 'id'>>) {
-    const idx = platforms.value.findIndex(p => p.id === id)
-    if (idx === -1) return
-    const platform = platforms.value[idx]
+  async function updatePlatform(id: string, patch: Partial<Omit<ModelPlatform, 'id'>>) {
+    const platform = getPlatform(id)
     if (!platform) return
-    Object.assign(platform, patch)
-    savePlatforms(platforms.value)
+
+    const updated = await api.update(id, toEditorInput({
+      ...platform,
+      ...patch,
+      defaultBaseUrl: patch.defaultBaseUrl ?? platform.defaultBaseUrl,
+    }))
+
+    loaded.value = true
+    return replacePlatform(updated)
   }
 
-  function removePlatform(id: string) {
-    const platform = platforms.value.find(p => p.id === id)
+  async function removePlatform(id: string) {
+    const platform = getPlatform(id)
     if (platform?.builtin) return
-    platforms.value = platforms.value.filter(p => p.id !== id)
-    savePlatforms(platforms.value)
+
+    const removed = await api.remove(id)
+    platforms.value = platforms.value.filter(item => item.id !== id)
+    loaded.value = true
+    return toModelPlatform(removed)
   }
 
-  function togglePlatformEnabled(id: string) {
-    const platform = platforms.value.find(p => p.id === id)
+  async function togglePlatformEnabled(id: string) {
+    const platform = getPlatform(id)
     if (!platform) return
-    platform.enabled = !platform.enabled
-    savePlatforms(platforms.value)
+
+    return updatePlatform(id, { enabled: !platform.enabled })
   }
 
-  function enableModel(platformId: string, model: string) {
-    const platform = platforms.value.find(p => p.id === platformId)
+  async function enableModel(platformId: string, model: string) {
+    const platform = getPlatform(platformId)
     if (!platform) return
-    platform.disabledModels = platform.disabledModels.filter(m => m !== model)
-    if (!platform.enabledModels.includes(model)) {
-      platform.enabledModels.push(model)
-    }
-    savePlatforms(platforms.value)
+
+    return updatePlatform(platformId, {
+      enabledModels: platform.enabledModels.includes(model)
+        ? platform.enabledModels
+        : [...platform.enabledModels, model],
+      disabledModels: platform.disabledModels.filter(item => item !== model),
+    })
   }
 
-  function disableModel(platformId: string, model: string) {
-    const platform = platforms.value.find(p => p.id === platformId)
+  async function disableModel(platformId: string, model: string) {
+    const platform = getPlatform(platformId)
     if (!platform) return
-    platform.enabledModels = platform.enabledModels.filter(m => m !== model)
-    if (!platform.disabledModels.includes(model)) {
-      platform.disabledModels.push(model)
-    }
-    savePlatforms(platforms.value)
+
+    return updatePlatform(platformId, {
+      enabledModels: platform.enabledModels.filter(item => item !== model),
+      disabledModels: platform.disabledModels.includes(model)
+        ? platform.disabledModels
+        : [...platform.disabledModels, model],
+    })
   }
 
-  function addCustomModel(platformId: string, model: string) {
-    const platform = platforms.value.find(p => p.id === platformId)
+  async function addCustomModel(platformId: string, model: string) {
+    const platform = getPlatform(platformId)
     if (!platform) return
-    if (!platform.enabledModels.includes(model) && !platform.disabledModels.includes(model)) {
-      platform.enabledModels.push(model)
-    }
-    savePlatforms(platforms.value)
+    if (platform.enabledModels.includes(model) || platform.disabledModels.includes(model)) return
+
+    return updatePlatform(platformId, {
+      enabledModels: [...platform.enabledModels, model],
+    })
   }
 
-  function removeModel(platformId: string, model: string) {
-    const platform = platforms.value.find(p => p.id === platformId)
+  async function removeModel(platformId: string, model: string) {
+    const platform = getPlatform(platformId)
     if (!platform) return
-    platform.enabledModels = platform.enabledModels.filter(m => m !== model)
-    platform.disabledModels = platform.disabledModels.filter(m => m !== model)
-    savePlatforms(platforms.value)
+
+    return updatePlatform(platformId, {
+      enabledModels: platform.enabledModels.filter(item => item !== model),
+      disabledModels: platform.disabledModels.filter(item => item !== model),
+    })
   }
 
   async function fetchModels(id: string): Promise<string[]> {
-    const platform = platforms.value.find(p => p.id === id)
+    const platform = getPlatform(id)
     if (!platform) throw new Error('未找到对应平台')
     if (platform.format === 'vertex') throw new Error('Vertex AI 不支持拉取模型列表')
 
-    const res = await $fetch<{ models: string[] }>('/api/models/fetch', {
-      method: 'POST',
-      body: {
-        baseUrl: platform.baseUrl,
-        apiKey: platform.apiKey,
-        format: platform.format,
-      },
-    })
-
-    const allKnown = new Set([...platform.enabledModels, ...platform.disabledModels])
-    for (const model of res.models) {
-      if (!allKnown.has(model)) {
-        platform.enabledModels.push(model)
-        allKnown.add(model)
-      }
-    }
-    platform.enabledModels.sort((a, b) => a.localeCompare(b))
-
-    savePlatforms(platforms.value)
-    return res.models
+    const result = await api.fetchModels(id)
+    loaded.value = true
+    replacePlatform(result.provider)
+    return result.models
   }
 
   return {
     platforms,
+    loaded,
+    refresh,
     addPlatform,
     updatePlatform,
     removePlatform,

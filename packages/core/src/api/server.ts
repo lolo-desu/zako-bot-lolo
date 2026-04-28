@@ -12,6 +12,7 @@ import { getApiErrorMessage, getApiErrorStatus, readJsonBody, writeApiError, wri
 import { getMcpRoute } from './routes/mcp.js'
 import { getBotsRoute } from './routes/bots.js'
 import { getConversationsRoute } from './routes/conversations.js'
+import { getLlmProvidersRoute } from './routes/llm-providers.js'
 import { getRolesRoute } from './routes/roles.js'
 import { getSettingsRoute } from './routes/settings.js'
 import { getSkillsRoute } from './routes/skills.js'
@@ -200,6 +201,14 @@ export class ApiServer {
     const rolesRoute = await getRolesRoute(req, pathname, this.db)
     if (rolesRoute) {
       return this.json(res, rolesRoute.body, rolesRoute.status)
+    }
+
+    const llmProvidersRoute = await getLlmProvidersRoute(req, pathname, {
+      db: this.db,
+      botManager: this.botManager,
+    })
+    if (llmProvidersRoute) {
+      return this.json(res, llmProvidersRoute.body, llmProvidersRoute.status)
     }
 
     const botsRoute = await getBotsRoute(req, pathname, {

@@ -1,9 +1,10 @@
-import type { McpServerRow, RoleRow, getBotWithRole } from '@zakobot/database'
+import type { LlmProviderRow, McpServerRow, RoleRow, getBotWithRole } from '@zakobot/database'
 import type {
   BotListItem,
   BotProfile,
   ConversationMessage,
   ConversationTopic,
+  LlmProviderProfile,
   McpServerProfile,
   McpTransport,
   RoleProfile,
@@ -36,7 +37,8 @@ export function toBotProfile(row: BotWithRole): BotProfile {
     roleId: row.instance.roleId,
     roleName: row.role.name,
     roleAvatar: row.role.avatar,
-    llmProvider: row.instance.llmProvider as 'openai',
+    llmProvider: row.instance.llmProvider as BotProfile['llmProvider'],
+    llmProviderId: row.instance.llmProviderId ?? '',
     llmPlatformName: row.instance.llmPlatformName,
     llmModel: row.instance.llmModel,
     llmApiKey: row.instance.llmApiKey,
@@ -113,6 +115,23 @@ export function toMcpServerProfile(row: McpServerRow): McpServerProfile {
     env: parseJsonStringRecord(row.env),
     url: row.url,
     enabled: row.enabled,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  }
+}
+
+export function toLlmProviderProfile(row: LlmProviderRow): LlmProviderProfile {
+  return {
+    id: row.id,
+    name: row.name,
+    format: row.format,
+    baseUrl: row.baseUrl,
+    apiKey: row.apiKey,
+    enabledModels: parseJsonStringArray(row.enabledModels),
+    disabledModels: parseJsonStringArray(row.disabledModels),
+    region: row.region,
+    enabled: row.enabled,
+    builtin: row.builtin,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   }
