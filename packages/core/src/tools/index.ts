@@ -5,6 +5,7 @@ import { createFileReadTool, createFileWriteTool, createFileEditTool, createFile
 import { createMarkdownTableImageTool } from './builtins/markdown-table-image.js'
 import { createSkillLoadTool } from './builtins/skill-load.js'
 import { createSkillCreateTool, createSkillListMineTool, createSkillUpdateTool } from './builtins/skill-manage.js'
+import { createNetdiskUploadTool } from './builtins/netdisk-upload.js'
 import { ToolRegistry } from './registry.js'
 import type { BrowseSettings } from '@zakobot/shared'
 import type { SearchSettings } from '@zakobot/shared'
@@ -27,6 +28,7 @@ export function createDefaultToolRegistry(
   registry.register(createFileEditTool(), { source: 'builtin' })
   registry.register(createFileListTool(), { source: 'builtin' })
   registry.register(createMarkdownTableImageTool(), { source: 'builtin' })
+  registry.register(createNetdiskUploadTool(), { source: 'builtin' })
 
   return registry
 }

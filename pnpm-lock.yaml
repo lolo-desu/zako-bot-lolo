@@ -20,6 +20,9 @@ importers:
       '@zakobot/core':
         specifier: workspace:*
         version: link:../core
+      '@zakobot/netdisk':
+        specifier: workspace:*
+        version: link:../netdisk
       '@zakobot/panel':
         specifier: workspace:*
         version: link:../panel
@@ -107,6 +110,18 @@ importers:
       drizzle-kit:
         specifier: ^0.31.1
         version: 0.31.10
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
+  packages/netdisk:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.17
       tsx:
         specifier: ^4.19.2
         version: 4.21.0

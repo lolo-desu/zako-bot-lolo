@@ -1,6 +1,6 @@
 import type { RoleEditorInput } from '../types/role.js'
 
-const BUILTIN_TOOLS = new Set<string>(['web_search', 'web_browse', 'shell_exec', 'file_read', 'file_write', 'file_edit', 'file_list', 'render_markdown_table_image'])
+const BUILTIN_TOOLS = new Set<string>(['web_search', 'web_browse', 'shell_exec', 'file_read', 'file_write', 'file_edit', 'file_list', 'render_markdown_table_image', 'netdisk_upload'])
 
 export function createDefaultRoleEditorInput(): RoleEditorInput {
   return {

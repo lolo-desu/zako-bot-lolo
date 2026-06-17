@@ -1,0 +1,22 @@
+{
+  "name": "@zakobot/netdisk",
+  "version": "0.2.0",
+  "description": "Simple expiring file sharing service for ZakoBot",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "dev": "node --watch --watch-preserve-output --import tsx src/index.ts",
+    "build": "tsc",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "start": "node dist/src/index.js",
+    "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

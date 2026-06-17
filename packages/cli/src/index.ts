@@ -5,7 +5,7 @@ import { createRequire } from 'module'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { homedir } from 'os'
-import { mkdirSync, existsSync, writeFileSync } from 'fs'
+import { mkdirSync, existsSync, writeFileSync, readFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const require = createRequire(import.meta.url)
@@ -32,8 +32,13 @@ program
   .action(() => { runPackage('panel') })
 
 program
+  .command('netdisk')
+  .description('Start the netdisk file sharing service')
+  .action(() => { runPackage('netdisk') })
+
+program
   .command('start')
-  .description('Start both core and panel')
+  .description('Start core and panel; also start netdisk when NETDISK_ENABLED=true')
   .action(cmdStart)
 
 program.parse()
@@ -62,12 +67,18 @@ function cmdInit() {
 }
 
 function cmdStart(): void {
+  for (const [key, value] of Object.entries(loadRuntimeEnv())) {
+    process.env[key] ??= value
+  }
+
   const coreProc = runPackage('core')
   const panelProc = runPackage('panel')
+  const netdiskProc = process.env.NETDISK_ENABLED === 'true' ? runPackage('netdisk') : null
 
   const shutdown = () => {
     coreProc.kill('SIGTERM')
     panelProc.kill('SIGTERM')
+    netdiskProc?.kill('SIGTERM')
   }
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
@@ -79,21 +90,58 @@ function zakobotHome() {
   return process.env.ZAKOBOT_HOME ?? resolve(homedir(), '.zakobot')
 }
 
-function resolveEntry(pkgName: 'core' | 'panel'): string {
+type PackageName = 'core' | 'panel' | 'netdisk'
+
+function loadRuntimeEnv(): Record<string, string> {
+  const envFile = resolve(zakobotHome(), 'netdisk.env')
+  return existsSync(envFile) ? readEnvFile(envFile) : {}
+}
+
+function readEnvFile(filePath: string): Record<string, string> {
+  const result: Record<string, string> = {}
+  const content = readFileSync(filePath, 'utf8')
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue
+    }
+
+    const index = trimmed.indexOf('=')
+    if (index === -1) {
+      continue
+    }
+
+    const key = trimmed.slice(0, index).trim()
+    const value = trimmed.slice(index + 1).trim()
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      result[key] = value
+    }
+  }
+
+  return result
+}
+
+function resolveEntry(pkgName: PackageName): string {
   const pkgJsonPath = require.resolve(`@zakobot/${pkgName}/package.json`) as string
   const pkgJson = require(pkgJsonPath) as { main: string }
   return resolve(dirname(pkgJsonPath), pkgJson.main)
 }
 
-function runPackage(pkgName: 'core' | 'panel') {
+function runPackage(pkgName: PackageName) {
   const entry = resolveEntry(pkgName)
   const home = zakobotHome()
   mkdirSync(home, { recursive: true })
-  const coreApiPort = process.env.CORE_API_PORT ?? '6325'
-  const panelPort = process.env.PANEL_PORT ?? process.env.NITRO_PORT ?? process.env.PORT ?? '6324'
+  const loadedEnv = loadRuntimeEnv()
+  const mergedEnv = {
+    ...loadedEnv,
+    ...process.env,
+  }
+  const coreApiPort = mergedEnv.CORE_API_PORT ?? '6325'
+  const panelPort = mergedEnv.PANEL_PORT ?? mergedEnv.NITRO_PORT ?? mergedEnv.PORT ?? '6324'
   const packageEnv = pkgName === 'panel'
     ? {
-        CORE_API_URL: process.env.CORE_API_URL ?? `http://127.0.0.1:${coreApiPort}`,
+        CORE_API_URL: mergedEnv.CORE_API_URL ?? `http://127.0.0.1:${coreApiPort}`,
         NITRO_PORT: panelPort,
         PORT: panelPort,
       }
@@ -102,7 +150,7 @@ function runPackage(pkgName: 'core' | 'panel') {
   const child = spawn(process.execPath, [entry], {
     stdio: 'inherit',
     env: {
-      ...process.env,
+      ...mergedEnv,
       ...packageEnv,
       ZAKOBOT_HOME: home,
     },
